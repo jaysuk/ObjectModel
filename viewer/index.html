@@ -2110,18 +2110,34 @@ async function liveConnect() {
   btn.disabled = true;
   btn.textContent = 'Connecting…';
 
-  const [rrResult, machineResult] = await Promise.allSettled([
-    fetchLiveJSON(liveHost + '/rr_model?flags=d99fn'),
-    fetchLiveJSON(liveHost + '/machine/status')
-  ]);
+  // Try standalone RRF: connect first (establishes session), then fetch model
+  let connected = false;
+  try {
+    const connRes = await fetchLiveJSON(liveHost + '/rr_connect?password=reprap');
+    if (typeof connRes.err === 'number') {
+      // Session established — now fetch the full model
+      const modelRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
+      if (modelRes?.result) {
+        liveEndpoint = 'rr_model';
+        liveData = modelRes.result;
+        connected = true;
+      }
+    }
+  } catch (_) {}
 
-  if (rrResult.status === 'fulfilled' && rrResult.value?.result) {
-    liveEndpoint = 'rr_model';
-    liveData = rrResult.value.result;
-  } else if (machineResult.status === 'fulfilled') {
-    liveEndpoint = 'machine_status';
-    liveData = machineResult.value;
-  } else {
+  // Try DSF/SBC
+  if (!connected) {
+    try {
+      const data = await fetchLiveJSON(liveHost + '/machine/status');
+      if (data && typeof data === 'object') {
+        liveEndpoint = 'machine_status';
+        liveData = data;
+        connected = true;
+      }
+    } catch (_) {}
+  }
+
+  if (!connected) {
     btn.disabled = false;
     btn.textContent = 'Connect';
     showError('Could not connect to printer at ' + liveHost +
@@ -2171,7 +2187,15 @@ async function livePoll() {
   try {
     let data;
     if (liveEndpoint === 'rr_model') {
-      const json = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
+      // RRF sessions can expire — reconnect transparently if needed
+      let json;
+      try {
+        json = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
+      } catch (_) {
+        // Try re-establishing the session
+        await fetchLiveJSON(liveHost + '/rr_connect?password=reprap');
+        json = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
+      }
       data = json.result;
     } else {
       data = await fetchLiveJSON(liveHost + '/machine/status');
@@ -2704,9 +2728,9 @@ function askSubnet(defaultSubnet) {
   return new Promise(resolve => {
     const input = document.getElementById('subnetInput');
     const goBtn = document.getElementById('subnetScanBtn');
-    const go = () => resolve(input.value.trim() || null);
+    const go = e => { e.stopPropagation(); resolve(input.value.trim() || null); };
     goBtn.addEventListener('click', go);
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.stopPropagation(); resolve(input.value.trim() || null); } });
   });
 }
 
