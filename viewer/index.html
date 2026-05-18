@@ -514,7 +514,7 @@ async function loadBranches() {
         const o = document.createElement('option');
         o.value = b.name;
         o.textContent = b.name;
-        if (b.name === 'master' || b.name === 'main') o.selected = true;
+        if (b.name === 'v3.6-dev' || b.name === 'master' || b.name === 'main') o.selected = true;
         og.appendChild(o);
       });
       sel.appendChild(og);
