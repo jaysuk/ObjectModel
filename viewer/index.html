@@ -947,7 +947,7 @@ function isDictType(t) {
 // We evict all entries that don't match the current key on write,
 // keeping localStorage from growing unboundedly.
 // ────────────────────────────────────────────────────────────
-const CACHE_VERSION = 'om_v1';
+const CACHE_VERSION = 'om_v2';
 
 function cacheKey(omSha, dsfSha) {
   return `${CACHE_VERSION}_${omSha}_${dsfSha || 'none'}`;
