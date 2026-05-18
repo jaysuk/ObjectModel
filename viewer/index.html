@@ -2711,49 +2711,19 @@ function askSubnet(defaultSubnet) {
 }
 
 let scanAbortFlag = false;
+let scanRunning = false;
 
-async function runScan() {
+async function startScan(subnet) {
   const btn = document.getElementById('scanBtn');
   const dropdown = document.getElementById('scanDropdown');
   const scanStatus = document.getElementById('scanStatus');
   const scanResults = document.getElementById('scanResults');
 
-  // Toggle dropdown off if already open and not scanning
-  if (dropdown.style.display !== 'none' && btn.textContent !== 'Stop') {
-    dropdown.style.display = 'none';
-    scanAbortFlag = true;
-    btn.textContent = 'Scan';
-    return;
-  }
-
+  scanRunning = true;
   scanAbortFlag = false;
-  dropdown.style.display = '';
   scanResults.innerHTML = '';
-  scanStatus.textContent = 'Detecting local subnet…';
-  btn.textContent = 'Stop';
-
-  let subnet = await getLocalSubnet();
-  if (!subnet) {
-    // Guess a sensible default from the host input if it looks like an IP
-    const hostVal = document.getElementById('hostInput').value.trim();
-    const hostMatch = hostVal.match(/^(\d+\.\d+\.\d+)\.\d+$/);
-    const defaultSubnet = hostMatch ? hostMatch[1] : '192.168.1';
-    subnet = await askSubnet(defaultSubnet);
-    if (!subnet || scanAbortFlag) {
-      btn.textContent = 'Scan';
-      return;
-    }
-    scanResults.innerHTML = '';
-  }
-
-  // Validate subnet format (x.x.x)
-  if (!/^\d+\.\d+\.\d+$/.test(subnet)) {
-    scanStatus.textContent = 'Invalid subnet format. Use x.x.x (e.g. 192.168.1)';
-    btn.textContent = 'Scan';
-    return;
-  }
-
   scanStatus.textContent = `Scanning ${subnet}.0/24…`;
+  btn.textContent = 'Stop';
 
   // Build list of all 254 host IPs, scan in parallel batches of 30
   const ips = Array.from({ length: 254 }, (_, i) => `${subnet}.${i + 1}`);
@@ -2778,6 +2748,7 @@ async function runScan() {
         dropdown.style.display = 'none';
         scanAbortFlag = true;
         btn.textContent = 'Scan';
+        scanRunning = false;
       });
       scanResults.appendChild(item);
     }
@@ -2785,6 +2756,7 @@ async function runScan() {
     scanStatus.textContent = `Scanning ${subnet}.0/24… (${done}/254)${found ? ` — ${found} found` : ''}`;
   }
 
+  scanRunning = false;
   if (!scanAbortFlag) {
     scanStatus.textContent = found
       ? `Found ${found} Duet device${found !== 1 ? 's' : ''} on ${subnet}.0/24`
@@ -2793,15 +2765,59 @@ async function runScan() {
   }
 }
 
+async function runScan() {
+  const btn = document.getElementById('scanBtn');
+  const dropdown = document.getElementById('scanDropdown');
+  const scanStatus = document.getElementById('scanStatus');
+  const scanResults = document.getElementById('scanResults');
+
+  // If a scan is running, stop it
+  if (scanRunning) {
+    scanAbortFlag = true;
+    scanRunning = false;
+    btn.textContent = 'Scan';
+    return;
+  }
+
+  // Toggle dropdown closed if already open (idle)
+  if (dropdown.style.display !== 'none') {
+    dropdown.style.display = 'none';
+    btn.textContent = 'Scan';
+    return;
+  }
+
+  dropdown.style.display = '';
+  scanResults.innerHTML = '';
+  scanStatus.textContent = 'Detecting local subnet…';
+
+  let subnet = await getLocalSubnet();
+  if (!subnet) {
+    // Guess a sensible default from the host input if it looks like an IP
+    const hostVal = document.getElementById('hostInput').value.trim();
+    const hostMatch = hostVal.match(/^(\d+\.\d+\.\d+)\.\d+$/);
+    subnet = await askSubnet(hostMatch ? hostMatch[1] : '192.168.1');
+    if (!subnet) { btn.textContent = 'Scan'; return; }
+  }
+
+  // Validate subnet format (x.x.x)
+  if (!/^\d+\.\d+\.\d+$/.test(subnet)) {
+    scanStatus.textContent = 'Invalid subnet — use format x.x.x (e.g. 192.168.1)';
+    btn.textContent = 'Scan';
+    return;
+  }
+
+  await startScan(subnet);
+}
+
 document.getElementById('scanBtn').addEventListener('click', runScan);
 
 // Close scan dropdown when clicking outside
 document.addEventListener('click', e => {
   const dropdown = document.getElementById('scanDropdown');
   if (dropdown.style.display === 'none') return;
-  if (!dropdown.closest('div').contains(e.target) && e.target.id !== 'scanBtn') {
+  if (!dropdown.contains(e.target) && e.target.id !== 'scanBtn') {
     dropdown.style.display = 'none';
-    scanAbortFlag = true;
+    if (scanRunning) { scanAbortFlag = true; scanRunning = false; }
     document.getElementById('scanBtn').textContent = 'Scan';
   }
 });
