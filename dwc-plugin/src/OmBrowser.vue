@@ -3,83 +3,81 @@
     <!-- Toolbar -->
     <v-toolbar dense flat color="surface" class="flex-shrink-0">
       <v-toolbar-title class="subtitle-2 primary--text">Object Model Browser</v-toolbar-title>
-      <span class="caption ml-2" style="color:#7f849c">{{ modelRef }}</span>
+      <span class="caption ml-2 grey--text">{{ modelRef }}</span>
       <v-spacer />
       <v-text-field
         v-model="searchTerm"
-        dense
-        outlined
-        hide-details
-        clearable
+        dense outlined hide-details clearable
         placeholder="Search properties..."
         prepend-inner-icon="mdi-magnify"
         style="max-width:260px"
       />
-      <v-btn icon small @click="expandAll" title="Expand All">
-        <v-icon small>mdi-chevron-down-box-outline</v-icon>
-      </v-btn>
-      <v-btn icon small @click="collapseAll" title="Collapse All">
-        <v-icon small>mdi-chevron-up-box-outline</v-icon>
-      </v-btn>
+      <v-btn icon small title="Expand All" @click="expandAll"><v-icon small>mdi-chevron-down-box-outline</v-icon></v-btn>
+      <v-btn icon small title="Collapse All" @click="collapseAll"><v-icon small>mdi-chevron-up-box-outline</v-icon></v-btn>
     </v-toolbar>
 
     <!-- DSF indicator bar -->
-    <div class="dsf-bar px-4 caption" style="display:flex;align-items:center;gap:8px;height:24px;flex-shrink:0;background:#252535;border-bottom:1px solid #3d3d5c">
-      <span :class="['dsf-dot', dsfState]" />
-      <span style="color:#7f849c">{{ dsfLabel }}</span>
+    <div style="display:flex;align-items:center;gap:8px;height:24px;flex-shrink:0;padding:0 16px;background:#1e1e2e;border-bottom:1px solid #313244">
+      <span :style="{ width:'7px', height:'7px', borderRadius:'50%', background: dsfState==='ok' ? '#a6e3a1' : '#7f849c', display:'inline-block', flexShrink:0 }" />
+      <span class="caption grey--text">{{ dsfLabel }}</span>
     </div>
 
     <!-- Main split pane -->
     <div style="display:flex;flex:1;overflow:hidden">
+
       <!-- Tree panel -->
-      <div style="width:360px;min-width:180px;flex-shrink:0;border-right:1px solid #3d3d5c;display:flex;flex-direction:column;overflow:hidden">
-        <div ref="treeScroll" style="flex:1;overflow-y:auto;padding:8px 4px">
-          <template v-if="searchTerm && searchTerm.trim()">
-            <om-search-results
-              :matches="searchMatches"
-              :search-term="searchTerm"
-              @select-class="selectClass"
-            />
-          </template>
+      <div ref="treePanel" style="width:360px;min-width:160px;flex-shrink:0;border-right:1px solid #313244;overflow-y:auto">
+        <!-- Search results -->
+        <template v-if="searchTerm && searchTerm.trim()">
+          <div v-if="!searchMatches.length" class="pa-3 grey--text caption">No results</div>
           <template v-else>
-            <om-tree-node
-              v-if="rootClass"
-              :cls="rootClass"
-              :model="omModel"
-              :depth="0"
-              :prop-name="'objectModel'"
-              :selected-class="selectedClassName"
-              :open-nodes="openNodes"
-              @select="selectClass"
-              @toggle="toggleNode"
-            />
+            <div
+              v-for="g in searchMatches" :key="g.clsName"
+              class="tree-row font-weight-bold"
+              @click="selectClass(g.clsName)"
+            >
+              <span class="tree-name">{{ g.clsName }}</span>
+              <span class="tree-badge">{{ g.props.length }}</span>
+            </div>
           </template>
-        </div>
+        </template>
+
+        <!-- Flat tree rows -->
+        <template v-else>
+          <div
+            v-for="row in treeRows"
+            :key="row.key"
+            :class="['tree-row', { 'tree-row--selected': selectedClassName === row.cls.name }]"
+            :style="{ paddingLeft: (8 + row.depth * 16) + 'px' }"
+            @click="selectClass(row.cls.name)"
+          >
+            <span
+              class="tree-toggle"
+              @click.stop="toggleNode(row.key)"
+            >{{ openNodes[row.key] ? '▼' : '▶' }}</span>
+            <span class="tree-name">{{ row.propName }}</span>
+            <span v-if="row.cls.name !== row.propName" class="tree-type">{{ row.cls.name }}</span>
+          </div>
+        </template>
       </div>
 
       <!-- Resizer -->
-      <div
-        class="resizer"
-        @mousedown="startResize"
-      />
+      <div class="resizer" @mousedown="startResize" />
 
       <!-- Detail panel -->
       <div ref="detailPanel" style="flex:1;overflow-y:auto;padding:20px 24px">
-        <div v-if="!selectedClassName" class="placeholder" style="margin-top:60px;text-align:center">
-          Select an item in the tree to view details.<br>
-          <span style="font-size:12px;color:#7f849c">Use the branch selector above to switch RRF releases.</span>
+        <div v-if="!selectedClassName" class="grey--text text-center" style="margin-top:60px;font-size:14px;line-height:2">
+          Select an item in the tree to view details.
         </div>
+
         <template v-else-if="detailType === 'class' && detailClass">
           <!-- Breadcrumb -->
-          <div v-if="navStack.length" class="detail-breadcrumb mb-2">
-            <span
-              v-for="(entry, i) in navStack"
-              :key="i"
-              class="bc-item"
-              @click="navigateBreadcrumb(i)"
-            >{{ entry.key }}</span>
-            <span class="bc-sep">›</span>
-            <span class="bc-current">{{ detailClass.name }}</span>
+          <div v-if="navStack.length" class="mb-2" style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:12px">
+            <span v-for="(entry, i) in navStack" :key="i">
+              <a class="primary--text" style="cursor:pointer;text-decoration:underline dotted" @click="navigateBreadcrumb(i)">{{ entry.key }}</a>
+              <span class="grey--text mx-1">›</span>
+            </span>
+            <span class="grey--text">{{ detailClass.name }}</span>
           </div>
 
           <!-- Header -->
@@ -91,22 +89,18 @@
           <div v-if="currentPaths.length" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
             <span v-for="p in currentPaths" :key="p" style="display:inline-flex;align-items:center;gap:2px">
               <code class="om-path-code">{{ p }}</code>
-              <v-btn icon x-small @click="copyPath(p)" title="Copy path">
-                <v-icon x-small>mdi-content-copy</v-icon>
-              </v-btn>
+              <v-btn icon x-small @click="copyPath(p)" title="Copy path"><v-icon x-small>mdi-content-copy</v-icon></v-btn>
             </span>
           </div>
 
           <!-- Class description -->
-          <div v-if="currentClassDesc" class="class-description mb-4">
+          <div v-if="currentClassDesc" class="class-desc mb-4">
             {{ currentClassDesc.summary }}
-            <div v-if="currentClassDesc.remarks" class="remarks">{{ currentClassDesc.remarks }}</div>
+            <div v-if="currentClassDesc.remarks" class="grey--text mt-1" style="font-size:12px;font-style:italic">{{ currentClassDesc.remarks }}</div>
           </div>
 
           <!-- Properties table -->
-          <div v-if="!detailClass.props || !detailClass.props.length" style="color:#7f849c;font-size:13px;margin-top:16px">
-            No properties found.
-          </div>
+          <div v-if="!detailClass.props || !detailClass.props.length" class="grey--text caption mt-4">No properties found.</div>
           <v-simple-table v-else dense class="prop-table">
             <template #default>
               <thead>
@@ -123,47 +117,39 @@
                 <tr
                   v-for="p in detailClass.props"
                   :key="p.name"
-                  :class="{ 'prop-row-drilldown': drillTarget(p) }"
+                  :class="{ 'row-drilldown': !!drillTarget(p) }"
                   @click="drillTarget(p) && navigateDetail('class', drillTarget(p))"
                 >
                   <td>
-                    <span :class="['prop-name', { 'is-readonly': p.readonly }]">{{ p.name }}</span>
-                    <span v-if="drillTarget(p)" class="prop-drilldown-chevron">›</span>
-                    <span v-if="propDesc(p) && propDesc(p).sbcProperty === false" class="tag tag-sbc-only" title="SBC only">SBC only</span>
-                    <span v-else-if="propDesc(p) && propDesc(p).sbcProperty === true" class="tag tag-sbc-also" title="SBC managed">SBC</span>
+                    <span :class="['prop-name', { 'prop-name--readonly': p.readonly }]">{{ p.name }}</span>
+                    <span v-if="drillTarget(p)" class="primary--text ml-1">›</span>
+                    <span v-if="propDesc(p) && propDesc(p).sbcProperty === false" class="tag tag-sbc-only ml-1">SBC only</span>
+                    <span v-else-if="propDesc(p) && propDesc(p).sbcProperty === true" class="tag tag-sbc ml-1">SBC</span>
                   </td>
                   <td>
-                    <span
-                      :class="['prop-type', { 'prop-link': typeLink(p) }]"
-                      @click.stop="typeLink(p) && navigateDetail(typeLink(p).kind, typeLink(p).name)"
-                    >{{ typeDisplay(p) }}</span>
-                    <span v-if="p.nullable" style="color:#7f849c;font-size:11px"> or null</span>
-                    <div v-if="inlineEnum(p)" class="enum-inline">
+                    <span :class="['prop-type', { 'prop-type--link': typeLink(p) }]" @click.stop="typeLink(p) && navigateDetail(typeLink(p).kind, typeLink(p).name)">{{ typeDisplay(p) }}</span>
+                    <span v-if="p.nullable" class="grey--text" style="font-size:11px"> or null</span>
+                    <div v-if="inlineEnum(p)" style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px">
                       <span
-                        v-for="m in inlineEnum(p).members"
-                        :key="m.key"
+                        v-for="m in inlineEnum(p).members" :key="m.key"
                         class="enum-pip"
                         :title="enumMemberDesc(inlineEnum(p).name, m.key)"
                       >{{ m.key }}</span>
                     </div>
                   </td>
-                  <td><span class="prop-default">{{ p.default || '' }}</span></td>
+                  <td><code class="prop-default">{{ p.default || '' }}</code></td>
                   <td v-if="hasLiveModel">
-                    <span :class="['live-value', liveValueClass(liveValueAt(propPath(p)))]">
-                      {{ formatLiveValue(liveValueAt(propPath(p))) }}
-                    </span>
+                    <span :class="['live-val', liveValClass(liveValueAt(propPath(p)))]">{{ fmtLive(liveValueAt(propPath(p))) }}</span>
                   </td>
-                  <td v-if="hasAnyDesc" class="prop-desc-cell">
+                  <td v-if="hasAnyDesc" class="desc-cell">
                     <template v-if="propDesc(p)">
                       {{ propDesc(p).summary }}
-                      <div v-if="propDesc(p).remarks" class="remarks">{{ propDesc(p).remarks }}</div>
+                      <div v-if="propDesc(p).remarks" class="grey--text mt-1" style="font-size:11px;font-style:italic">{{ propDesc(p).remarks }}</div>
                     </template>
-                    <span v-else style="color:#7f849c">—</span>
+                    <span v-else class="grey--text">—</span>
                   </td>
                   <td style="text-align:center">
-                    <v-btn icon x-small @click.stop="copyPath(propPath(p))" :title="'Copy: ' + propPath(p)">
-                      <v-icon x-small>mdi-content-copy</v-icon>
-                    </v-btn>
+                    <v-btn icon x-small :title="'Copy: ' + propPath(p)" @click.stop="copyPath(propPath(p))"><v-icon x-small>mdi-content-copy</v-icon></v-btn>
                   </td>
                 </tr>
               </tbody>
@@ -172,33 +158,27 @@
         </template>
 
         <template v-else-if="detailType === 'enum' && detailEnum">
-          <!-- Enum detail -->
-          <div v-if="navStack.length" class="detail-breadcrumb mb-2">
-            <span v-for="(entry, i) in navStack" :key="i" class="bc-item" @click="navigateBreadcrumb(i)">{{ entry.key }}</span>
-            <span class="bc-sep">›</span>
-            <span class="bc-current">{{ detailEnum.name }}</span>
+          <div v-if="navStack.length" class="mb-2" style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:12px">
+            <span v-for="(entry, i) in navStack" :key="i">
+              <a class="primary--text" style="cursor:pointer;text-decoration:underline dotted" @click="navigateBreadcrumb(i)">{{ entry.key }}</a>
+              <span class="grey--text mx-1">›</span>
+            </span>
+            <span class="grey--text">{{ detailEnum.name }}</span>
           </div>
           <h2 class="title primary--text mb-2">{{ detailEnum.name }}</h2>
-          <div v-if="currentClassDesc" class="class-description mb-4">{{ currentClassDesc.summary }}</div>
+          <div v-if="currentClassDesc" class="class-desc mb-4">{{ currentClassDesc.summary }}</div>
           <v-simple-table dense class="prop-table">
             <template #default>
-              <thead>
-                <tr>
-                  <th>Value</th>
-                  <th v-if="hasEnumMemberDescs">Description</th>
-                </tr>
-              </thead>
+              <thead><tr><th>Value</th><th v-if="hasEnumMemberDescs">Description</th></tr></thead>
               <tbody>
                 <tr v-for="m in detailEnum.members" :key="m.key">
                   <td>
-                    <span style="font-family:monospace;color:#a6e3a1">{{ m.key }}</span>
-                    <span v-if="m.value !== undefined" class="prop-default" style="margin-left:8px">= {{ m.value }}</span>
+                    <code style="color:#a6e3a1">{{ m.key }}</code>
+                    <code v-if="m.value !== undefined" class="prop-default ml-2">= {{ m.value }}</code>
                   </td>
-                  <td v-if="hasEnumMemberDescs" class="prop-desc-cell">
-                    <template v-if="enumMemberDesc(detailEnum.name, m.key)">
-                      {{ enumMemberDesc(detailEnum.name, m.key) }}
-                    </template>
-                    <span v-else style="color:#7f849c">—</span>
+                  <td v-if="hasEnumMemberDescs" class="desc-cell">
+                    <span v-if="enumMemberDesc(detailEnum.name, m.key)">{{ enumMemberDesc(detailEnum.name, m.key) }}</span>
+                    <span v-else class="grey--text">—</span>
                   </td>
                 </tr>
               </tbody>
@@ -208,195 +188,49 @@
       </div>
     </div>
 
-    <!-- Copy notification snackbar -->
     <v-snackbar v-model="copiedSnackbar" timeout="1500" bottom right color="success" :elevation="2">
-      <v-icon small class="mr-1">mdi-check</v-icon>
-      Copied to clipboard
+      <v-icon small class="mr-1">mdi-check</v-icon> Copied to clipboard
     </v-snackbar>
   </v-container>
 </template>
 
 <script>
 import { omModel as BUNDLED_MODEL, omDescriptions as BUNDLED_DESCRIPTIONS, MODEL_REF, DSF_REF_LABEL } from './model-data.js'
+import store from '@/store'
 
-// ── Utility functions (standalone, no Vue dependency) ──────
-
-function pascalToCamel(s) {
-  if (!s) return s
-  return s.charAt(0).toLowerCase() + s.slice(1)
-}
-
-function resolveCollectionType(typeStr) {
+function resolveCollectionType (typeStr) {
   let m = typeStr.match(/ModelCollection<([^>]+)>/)
   if (m) return m[1].replace(/\s*\|\s*null/g, '').trim()
   m = typeStr.match(/ModelDictionary<([^>]+)>/)
-  if (m) {
-    const parts = m[1].split(',')
-    return parts[parts.length - 1].replace(/\s*\|\s*null/g, '').trim()
-  }
+  if (m) { const p = m[1].split(','); return p[p.length - 1].replace(/\s*\|\s*null/g, '').trim() }
   m = typeStr.match(/Array<([^>]+)>/)
   if (m) return m[1].trim()
   return null
 }
-
-function isCollectionType(t) {
-  return /ModelCollection</.test(t) || /Array</.test(t) || t.endsWith('[]')
-}
-
-function isDictType(t) {
-  return /ModelDictionary</.test(t) || /Map</.test(t)
-}
-
-function shortType(t) {
-  return t.replace('ModelCollection', 'Collection').replace('ModelDictionary', 'Dict').replace('ModelSet', 'Set')
-}
-
-// ── Inline tree node component ─────────────────────────────
-const OmTreeNode = {
-  name: 'OmTreeNode',
-  props: {
-    cls: Object,
-    model: Object,
-    depth: Number,
-    propName: String,
-    selectedClass: String,
-    openNodes: Object
-  },
-  data() {
-    return { populated: false }
-  },
-  computed: {
-    nodeKey() { return this.cls.name + ':' + this.propName },
-    isOpen() { return !!this.openNodes[this.nodeKey] },
-    childProps() {
-      if (!this.populated) return []
-      return (this.cls.props || []).filter(p => {
-        const inner = resolveCollectionType(p.type)
-        const t = (inner || p.type).replace(/\s*\|\s*null/g, '').trim()
-        return this.model.classes[t]
-      })
-    },
-    leafProps() {
-      if (!this.populated) return []
-      return (this.cls.props || []).filter(p => {
-        const inner = resolveCollectionType(p.type)
-        const t = (inner || p.type).replace(/\s*\|\s*null/g, '').trim()
-        return !this.model.classes[t]
-      })
-    }
-  },
-  template: `
-    <div class="tree-node">
-      <div
-        :class="['tree-row', { selected: selectedClass === cls.name }]"
-        @click="selectThis"
-      >
-        <span class="tree-indent" :style="{ width: (depth * 16) + 'px' }" />
-        <span class="tree-toggle" @click.stop="toggle">{{ isOpen ? '▼' : '▶' }}</span>
-        <span class="tree-name">{{ propName || cls.name }}</span>
-        <span v-if="cls.name !== propName" class="tree-badge badge-class">{{ cls.name }}</span>
-      </div>
-      <div v-if="isOpen" class="tree-children">
-        <om-tree-node
-          v-for="p in childProps"
-          :key="p.name"
-          :cls="childClass(p)"
-          :model="model"
-          :depth="depth + 1"
-          :prop-name="p.name"
-          :selected-class="selectedClass"
-          :open-nodes="openNodes"
-          @select="forwardSelect"
-          @toggle="forwardToggle"
-        />
-        <div v-for="p in leafProps" :key="p.name" class="tree-row" @click="$emit('select', { type: 'class', name: cls.name })">
-          <span class="tree-indent" :style="{ width: ((depth + 1) * 16) + 'px' }" />
-          <span class="tree-toggle" />
-          <span class="tree-name">{{ p.name }}</span>
-          <span class="dim">{{ shortType(p.type) }}</span>
-        </div>
-        <div v-if="!childProps.length && !leafProps.length" style="padding:4px 8px;font-size:12px;color:#7f849c">(no properties)</div>
-      </div>
-    </div>
-  `,
-  methods: {
-    toggle() {
-      if (!this.populated) { this.populated = true }
-      this.$emit('toggle', this.nodeKey)
-    },
-    selectThis() {
-      this.$emit('select', { type: 'class', name: this.cls.name })
-    },
-    forwardSelect(e) { this.$emit('select', e) },
-    forwardToggle(e) { this.$emit('toggle', e) },
-    childClass(p) {
-      const inner = resolveCollectionType(p.type)
-      const t = (inner || p.type).replace(/\s*\|\s*null/g, '').trim()
-      return this.model.classes[t]
-    },
-    shortType
-  }
-}
-
-const OmSearchResults = {
-  name: 'OmSearchResults',
-  props: { matches: Array, searchTerm: String },
-  methods: {
-    hl(text) {
-      if (!this.searchTerm) return text
-      const lc = this.searchTerm.toLowerCase()
-      const idx = text.toLowerCase().indexOf(lc)
-      if (idx === -1) return text
-      return text.slice(0, idx) + '<mark>' + text.slice(idx, idx + lc.length) + '</mark>' + text.slice(idx + lc.length)
-    }
-  },
-  template: `
-    <div>
-      <div v-if="!matches.length" style="color:#7f849c;font-size:13px;padding:8px">No results</div>
-      <div v-for="g in matches" :key="g.clsName">
-        <div class="tree-row" style="font-weight:600" @click="$emit('select-class', g.clsName)">
-          <span class="tree-name" v-html="hl(g.clsName)" />
-          <span class="tree-badge badge-class">{{ g.props.length }}</span>
-        </div>
-        <div v-for="p in g.props" :key="p.name" class="tree-row" @click="$emit('select-class', g.clsName)">
-          <span class="tree-indent" style="width:24px" />
-          <span class="tree-name" v-html="hl(p.name)" />
-          <span class="dim">{{ p.type }}</span>
-        </div>
-      </div>
-    </div>
-  `
-}
+function isCollectionType (t) { return /ModelCollection</.test(t) || /Array</.test(t) || t.endsWith('[]') }
+function isDictType (t) { return /ModelDictionary</.test(t) || /Map</.test(t) }
+function shortType (t) { return t.replace('ModelCollection', 'Collection').replace('ModelDictionary', 'Dict').replace('ModelSet', 'Set') }
+function pascalToCamel (s) { return s ? s.charAt(0).toLowerCase() + s.slice(1) : s }
 
 export default {
   name: 'OmBrowser',
 
-  components: { OmTreeNode, OmSearchResults },
-
-  data() {
+  data () {
     return {
-      // Model — pre-built at plugin build time, no runtime fetching needed
       omModel: BUNDLED_MODEL,
       descriptions: BUNDLED_DESCRIPTIONS,
       modelRef: MODEL_REF,
-
-      // DSF indicator
       dsfState: 'ok',
       dsfLabel: `DSF descriptions: ${DSF_REF_LABEL} (${Object.keys(BUNDLED_DESCRIPTIONS).length} types)`,
 
-      // Tree state
       openNodes: {},
       searchTerm: '',
 
-      // Detail panel
       selectedClassName: null,
       detailType: null,
       navStack: [],
 
-      // UI
       copiedSnackbar: false,
-
-      // Resize
       resizing: false,
       resizeStartX: 0,
       resizeStartW: 0
@@ -404,57 +238,54 @@ export default {
   },
 
   computed: {
-    rootClass() {
-      return this.omModel.classes['ObjectModel'] || null
+    liveModel () {
+      try { return store.state.machine.model } catch (e) { return null }
     },
+    hasLiveModel () { return !!this.liveModel },
 
-    modelLoaded() {
-      return !!this.rootClass
-    },
+    rootClass () { return this.omModel.classes['ObjectModel'] || null },
 
-    liveModel() {
-      try {
-        return this.$store.state.machine.model
-      } catch (e) {
-        return null
+    // Build a flat list of tree rows from the open/closed state
+    treeRows () {
+      const rows = []
+      if (!this.rootClass) return rows
+      const walk = (cls, propName, depth) => {
+        const key = cls.name + ':' + propName
+        rows.push({ key, cls, propName, depth })
+        if (!this.openNodes[key]) return
+        for (const p of cls.props || []) {
+          const inner = resolveCollectionType(p.type)
+          const t = (inner || p.type).replace(/\s*\|\s*null/g, '').trim()
+          const child = this.omModel.classes[t]
+          if (child) walk(child, p.name, depth + 1)
+        }
       }
+      walk(this.rootClass, 'objectModel', 0)
+      return rows
     },
 
-    hasLiveModel() {
-      return !!this.liveModel
-    },
-
-    detailClass() {
+    detailClass () {
       if (this.detailType !== 'class' || !this.selectedClassName) return null
       return this.omModel.classes[this.selectedClassName] || null
     },
-
-    detailEnum() {
+    detailEnum () {
       if (this.detailType !== 'enum' || !this.selectedClassName) return null
       return this.omModel.enums[this.selectedClassName] || null
     },
-
-    currentClassDesc() {
+    currentClassDesc () {
       if (!this.selectedClassName) return null
-      return this.descriptions[this.selectedClassName]?.__class__ || null
+      return (this.descriptions[this.selectedClassName] || {}).__class__ || null
     },
-
-    currentPaths() {
-      if (!this.detailClass) return []
-      return this.findPaths(this.detailClass.name)
+    currentPaths () {
+      return this.detailClass ? this.findPaths(this.detailClass.name) : []
     },
-
-    hasAnyDesc() {
-      if (!this.detailClass) return false
-      return (this.detailClass.props || []).some(p => this.propDesc(p))
+    hasAnyDesc () {
+      return this.detailClass ? (this.detailClass.props || []).some(p => this.propDesc(p)) : false
     },
-
-    hasEnumMemberDescs() {
-      if (!this.detailEnum) return false
-      return this.detailEnum.members.some(m => this.enumMemberDesc(this.detailEnum.name, m.key))
+    hasEnumMemberDescs () {
+      return this.detailEnum ? this.detailEnum.members.some(m => this.enumMemberDesc(this.detailEnum.name, m.key)) : false
     },
-
-    searchMatches() {
+    searchMatches () {
       if (!this.searchTerm || !this.searchTerm.trim()) return []
       const lc = this.searchTerm.toLowerCase()
       const byClass = {}
@@ -465,7 +296,7 @@ export default {
             prop.name.toLowerCase().includes(lc) ||
             cls.name.toLowerCase().includes(lc) ||
             prop.type.toLowerCase().includes(lc) ||
-            desc?.summary?.toLowerCase().includes(lc)
+            (desc && desc.summary && desc.summary.toLowerCase().includes(lc))
           ) {
             if (!byClass[cls.name]) byClass[cls.name] = { clsName: cls.name, props: [] }
             byClass[cls.name].props.push(prop)
@@ -476,50 +307,42 @@ export default {
     }
   },
 
-  mounted() {
+  mounted () {
     window.addEventListener('mousemove', this.onMouseMove)
     window.addEventListener('mouseup', this.onMouseUp)
   },
 
-  beforeDestroy() {
+  beforeDestroy () {
     window.removeEventListener('mousemove', this.onMouseMove)
     window.removeEventListener('mouseup', this.onMouseUp)
   },
 
   methods: {
-    setDSFIndicator(state, label) {
-      this.dsfState = state
-      this.dsfLabel = label
+    toggleNode (key) {
+      this.$set(this.openNodes, key, !this.openNodes[key])
     },
 
-    // ── Tree ───────────────────────────────────────────────
-
-    toggleNode(nodeKey) {
-      this.$set(this.openNodes, nodeKey, !this.openNodes[nodeKey])
-    },
-
-    expandAll() {
+    expandAll () {
       const newOpen = {}
       const walk = (cls, propName, depth) => {
+        if (depth > 5) return
         const key = cls.name + ':' + propName
         newOpen[key] = true
         for (const p of cls.props || []) {
           const inner = resolveCollectionType(p.type)
           const t = (inner || p.type).replace(/\s*\|\s*null/g, '').trim()
           const child = this.omModel.classes[t]
-          if (child && depth < 6) walk(child, p.name, depth + 1)
+          if (child) walk(child, p.name, depth + 1)
         }
       }
       if (this.rootClass) walk(this.rootClass, 'objectModel', 0)
       this.openNodes = newOpen
     },
 
-    collapseAll() {
-      this.openNodes = {}
-    },
+    collapseAll () { this.openNodes = {} },
 
-    selectClass(e) {
-      const name = typeof e === 'string' ? e : e.name
+    selectClass (name) {
+      if (typeof name === 'object') name = name.name
       this.navStack = []
       if (this.omModel.classes[name]) {
         this.selectedClassName = name
@@ -530,9 +353,7 @@ export default {
       }
     },
 
-    // ── Detail navigation ─────────────────────────────────
-
-    navigateDetail(type, name) {
+    navigateDetail (type, name) {
       if (this.selectedClassName) {
         this.navStack = [...this.navStack, { type: this.detailType, key: this.selectedClassName }]
       }
@@ -540,7 +361,7 @@ export default {
       this.detailType = type
     },
 
-    navigateBreadcrumb(idx) {
+    navigateBreadcrumb (idx) {
       const entry = this.navStack[idx]
       if (!entry) return
       this.navStack = this.navStack.slice(0, idx)
@@ -548,72 +369,50 @@ export default {
       this.detailType = entry.type
     },
 
-    // ── Helpers ────────────────────────────────────────────
-
-    getClassDesc(className) {
-      return this.descriptions[className]?.__class__ || null
-    },
-
-    getPropDesc(className, propName) {
+    getPropDesc (className, propName) {
       const d = this.descriptions[className]
       if (!d) return null
       return d[propName] || d[propName.charAt(0).toUpperCase() + propName.slice(1)] || null
     },
-
-    propDesc(p) {
+    propDesc (p) {
       if (!this.detailClass) return null
       return this.getPropDesc(this.detailClass.name, p.name)
     },
-
-    enumMemberDesc(enumName, memberName) {
+    enumMemberDesc (enumName, memberName) {
       const d = this.descriptions[enumName]
       if (!d) return null
-      const entry = d[memberName] || d[pascalToCamel(memberName)]
-      return entry?.summary || null
+      const e = d[memberName] || d[pascalToCamel(memberName)]
+      return e ? e.summary || null : null
     },
 
-    drillTarget(p) {
+    drillTarget (p) {
       const inner = resolveCollectionType(p.type)
-      const isCol = isCollectionType(p.type)
-      const isDct = isDictType(p.type)
-      const isCls = !!this.omModel.classes[p.type]
-      if (isCol && inner && this.omModel.classes[inner]) return inner
-      if (isDct && inner && this.omModel.classes[inner]) return inner
-      if (isCls) return p.type
+      if (isCollectionType(p.type) && inner && this.omModel.classes[inner]) return inner
+      if (isDictType(p.type) && inner && this.omModel.classes[inner]) return inner
+      if (this.omModel.classes[p.type]) return p.type
       return null
     },
-
-    typeDisplay(p) {
+    typeDisplay (p) {
       const inner = resolveCollectionType(p.type)
-      const isCol = isCollectionType(p.type)
-      const isDct = isDictType(p.type)
-      if (isCol && inner) return inner + '[]'
-      if (isDct && inner) return inner + '{}'
+      if (isCollectionType(p.type) && inner) return inner + '[]'
+      if (isDictType(p.type) && inner) return inner + '{}'
       return shortType(p.type)
     },
-
-    typeLink(p) {
+    typeLink (p) {
       const inner = resolveCollectionType(p.type)
-      const isCol = isCollectionType(p.type)
-      const isDct = isDictType(p.type)
-      if (isCol && inner && (this.omModel.classes[inner] || this.omModel.enums[inner])) {
+      if (isCollectionType(p.type) && inner && (this.omModel.classes[inner] || this.omModel.enums[inner])) {
         return { name: inner, kind: this.omModel.classes[inner] ? 'class' : 'enum' }
       }
-      if (isDct && inner && this.omModel.classes[inner]) return { name: inner, kind: 'class' }
+      if (isDictType(p.type) && inner && this.omModel.classes[inner]) return { name: inner, kind: 'class' }
       if (this.omModel.classes[p.type]) return { name: p.type, kind: 'class' }
       if (this.omModel.enums[p.type]) return { name: p.type, kind: 'enum' }
       return null
     },
+    inlineEnum (p) { return this.omModel.enums[p.type] || null },
 
-    inlineEnum(p) {
-      return this.omModel.enums[p.type] || null
-    },
-
-    findPaths(targetClassName) {
+    findPaths (targetClassName) {
       const root = this.omModel.classes['ObjectModel']
       if (!root || !this.omModel.classes[targetClassName]) return []
-
-      // Build subclass map
       const direct = {}
       for (const cls of Object.values(this.omModel.classes)) {
         if (cls.parent) {
@@ -625,24 +424,20 @@ export default {
       const getAll = (name) => {
         if (subMap[name]) return subMap[name]
         subMap[name] = new Set()
-        for (const child of direct[name] || []) {
+        for (const child of (direct[name] || [])) {
           subMap[name].add(child)
           for (const grand of getAll(child)) subMap[name].add(grand)
         }
         return subMap[name]
       }
       for (const name of Object.keys(direct)) getAll(name)
-
       const results = new Set()
       const visited = new Set()
       const walk = (cls, pathSoFar) => {
         const key = cls.name + '|' + pathSoFar
         if (visited.has(key)) return
         visited.add(key)
-        if (cls.name === targetClassName && pathSoFar) {
-          results.add(pathSoFar)
-          return
-        }
+        if (cls.name === targetClassName && pathSoFar) { results.add(pathSoFar); return }
         for (const prop of cls.props || []) {
           const inner = resolveCollectionType(prop.type)
           const isCol = isCollectionType(prop.type)
@@ -652,33 +447,23 @@ export default {
           const suffix = isCol ? '[]' : isDct ? '{}' : ''
           const segment = pathSoFar ? pathSoFar + '.' + prop.name + suffix : prop.name + suffix
           const toWalk = new Set([resolvedType])
-          for (const sub of subMap[resolvedType] || []) toWalk.add(sub)
-          let ancestor = this.omModel.classes[resolvedType]
-          while (ancestor) {
-            for (const sub of subMap[ancestor.name] || []) toWalk.add(sub)
-            ancestor = ancestor.parent ? this.omModel.classes[ancestor.parent] : null
-          }
-          for (const name of toWalk) {
-            const c = this.omModel.classes[name]
-            if (c) walk(c, segment)
-          }
+          for (const sub of (subMap[resolvedType] || [])) toWalk.add(sub)
+          for (const name of toWalk) { const c = this.omModel.classes[name]; if (c) walk(c, segment) }
         }
       }
       walk(root, '')
       return [...results].sort()
     },
 
-    // ── Live value helpers ─────────────────────────────────
-
-    propPath(p) {
+    propPath (p) {
       if (!this.detailClass) return p.name
       const paths = this.findPaths(this.detailClass.name)
-      const basePath = paths.length > 0 ? paths[0] : (this.detailClass.name.charAt(0).toLowerCase() + this.detailClass.name.slice(1))
+      const base = paths.length > 0 ? paths[0] : pascalToCamel(this.detailClass.name)
       const isColOrDict = isCollectionType(p.type) || isDictType(p.type)
-      return (basePath ? basePath + (isColOrDict ? '[0].' : '.') : '') + p.name
+      return (base ? base + (isColOrDict ? '[0].' : '.') : '') + p.name
     },
 
-    liveValueAt(path) {
+    liveValueAt (path) {
       if (!this.liveModel || !path) return undefined
       let cur = this.liveModel
       for (const seg of path.replace(/\[(\d+)\]/g, '.$1').split('.')) {
@@ -687,8 +472,7 @@ export default {
       }
       return cur
     },
-
-    formatLiveValue(val) {
+    fmtLive (val) {
       if (val === undefined) return '—'
       if (val === null) return 'null'
       if (typeof val === 'boolean') return String(val)
@@ -697,44 +481,31 @@ export default {
       if (Array.isArray(val)) return '[' + val.length + ']'
       return '{…}'
     },
-
-    liveValueClass(val) {
-      if (val === null || val === undefined) return 'is-null'
-      if (val === true) return 'is-bool-true'
-      if (val === false) return 'is-bool-false'
+    liveValClass (val) {
+      if (val === null || val === undefined) return 'live-val--null'
+      if (val === true) return 'live-val--true'
+      if (val === false) return 'live-val--false'
       return ''
     },
 
-    // ── Clipboard ─────────────────────────────────────────
-
-    copyPath(path) {
+    copyPath (path) {
       if (navigator.clipboard) {
-        navigator.clipboard.writeText(path).then(() => {
-          this.copiedSnackbar = true
-        }).catch(() => {})
+        navigator.clipboard.writeText(path).then(() => { this.copiedSnackbar = true }).catch(() => {})
       }
     },
 
-    // ── Resize ────────────────────────────────────────────
-
-    startResize(e) {
+    startResize (e) {
       this.resizing = true
       this.resizeStartX = e.clientX
-      const treeEl = this.$el.querySelector('[style*="width:360px"]') ||
-                     this.$el.querySelector('.tree-panel')
-      this.resizeStartW = treeEl ? treeEl.offsetWidth : 360
-      this._resizeEl = treeEl
+      this.resizeStartW = this.$refs.treePanel ? this.$refs.treePanel.offsetWidth : 360
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
     },
-
-    onMouseMove(e) {
-      if (!this.resizing) return
-      const newW = Math.max(180, Math.min(700, this.resizeStartW + e.clientX - this.resizeStartX))
-      if (this._resizeEl) this._resizeEl.style.width = newW + 'px'
+    onMouseMove (e) {
+      if (!this.resizing || !this.$refs.treePanel) return
+      this.$refs.treePanel.style.width = Math.max(160, Math.min(700, this.resizeStartW + e.clientX - this.resizeStartX)) + 'px'
     },
-
-    onMouseUp() {
+    onMouseUp () {
       if (!this.resizing) return
       this.resizing = false
       document.body.style.cursor = ''
@@ -745,149 +516,72 @@ export default {
 </script>
 
 <style scoped>
-.om-browser {
-  font-family: 'Segoe UI', system-ui, sans-serif;
-  background: #1e1e2e;
-  color: #cdd6f4;
-}
-
-.placeholder {
-  color: #7f849c;
-  font-size: 14px;
-  padding: 20px;
-  line-height: 1.8;
-}
-
-.dsf-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #7f849c;
-  display: inline-block;
-  flex-shrink: 0;
-}
-.dsf-dot.ok { background: #a6e3a1; }
-.dsf-dot.error { background: #f38ba8; }
-.dsf-dot.none { background: #7f849c; }
-
-.tree-node { user-select: none; }
+.om-browser { font-family: 'Segoe UI', system-ui, sans-serif; }
 
 .tree-row {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 4px;
-  border-radius: 5px;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
-  line-height: 1.4;
+  user-select: none;
 }
-.tree-row:hover { background: #2e2e45; }
-.tree-row.selected { background: rgba(137,180,250,0.15); }
+.tree-row:hover { background: rgba(255,255,255,0.06); }
+.tree-row--selected { background: rgba(137,180,250,0.15); }
 
-.tree-indent { display: inline-block; flex-shrink: 0; }
-.tree-toggle { width: 16px; flex-shrink: 0; font-size: 10px; color: #7f849c; text-align: center; cursor: pointer; }
-.tree-name { font-weight: 500; color: #cdd6f4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-badge {
-  font-size: 10px;
-  border-radius: 3px;
-  padding: 1px 5px;
-  margin-left: 4px;
-  flex-shrink: 0;
-}
-.badge-class { background: rgba(137,180,250,0.2); color: #89b4fa; }
-.badge-collection { background: rgba(148,226,213,0.2); color: #94e2d5; }
-.badge-enum { background: rgba(166,227,161,0.2); color: #a6e3a1; }
-.tree-children { padding-left: 16px; }
-.dim { color: #7f849c; font-size: 12px; margin-left: auto; padding-left: 8px; flex-shrink: 0; }
+.tree-toggle { width: 14px; flex-shrink: 0; font-size: 9px; color: #7f849c; text-align: center; }
+.tree-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-type { font-size: 11px; color: #7f849c; margin-left: auto; padding-left: 8px; flex-shrink: 0; }
+.tree-badge { font-size: 11px; background: rgba(137,180,250,0.2); color: #89b4fa; border-radius: 3px; padding: 1px 5px; margin-left: auto; }
 
-.resizer {
-  width: 5px;
-  background: transparent;
-  cursor: col-resize;
-  flex-shrink: 0;
-  transition: background 0.15s;
-}
-.resizer:hover { background: #89b4fa; }
-
-.detail-breadcrumb {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 2px;
-  font-size: 12px;
-  color: #7f849c;
-}
-.bc-item { cursor: pointer; color: #89b4fa; text-decoration: underline dotted; }
-.bc-item:hover { color: #f5c2e7; }
-.bc-sep { color: #3d3d5c; margin: 0 2px; }
-.bc-current { color: #7f849c; cursor: default; }
+.resizer { width: 5px; background: transparent; cursor: col-resize; flex-shrink: 0; }
+.resizer:hover { background: rgba(137,180,250,0.4); }
 
 .om-path-code {
   font-family: monospace;
   font-size: 13px;
   color: #f9e2af;
-  background: rgba(249,226,175,0.1);
+  background: rgba(249,226,175,0.08);
   border: 1px solid rgba(249,226,175,0.2);
   border-radius: 4px;
   padding: 2px 8px;
-  user-select: all;
 }
 
-.class-description {
+.class-desc {
   font-size: 13px;
-  color: #cdd6f4;
   line-height: 1.6;
-  background: #2e2e45;
+  background: rgba(137,180,250,0.06);
   border-left: 3px solid #89b4fa;
-  padding: 10px 14px;
-  border-radius: 0 6px 6px 0;
-}
-.class-description .remarks {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #7f849c;
-  font-style: italic;
+  padding: 8px 12px;
+  border-radius: 0 4px 4px 0;
 }
 
 .prop-table { width: 100%; }
-.prop-name { font-weight: 500; color: #cdd6f4; font-family: monospace; }
-.prop-name.is-readonly { color: #cba6f7; }
-.prop-type { color: #94e2d5; font-family: monospace; }
-.prop-link { cursor: pointer; text-decoration: underline dotted; }
-.prop-link:hover { color: #f5c2e7; }
-.prop-default { color: #f9e2af; font-family: monospace; font-size: 12px; }
-.prop-desc-cell { font-size: 12px; color: #7f849c; line-height: 1.5; }
-.prop-desc-cell .remarks { margin-top: 2px; font-style: italic; opacity: 0.8; }
+.prop-name { font-family: monospace; font-weight: 500; }
+.prop-name--readonly { color: #cba6f7; }
+.prop-type { font-family: monospace; color: #94e2d5; }
+.prop-type--link { cursor: pointer; text-decoration: underline dotted; }
+.prop-type--link:hover { color: #f5c2e7; }
+.prop-default { font-family: monospace; font-size: 12px; color: #f9e2af; background: none; }
+.desc-cell { font-size: 12px; line-height: 1.5; }
 
-tr.prop-row-drilldown { cursor: pointer; }
-tr.prop-row-drilldown:hover td { background: rgba(137,180,250,0.07); }
-.prop-drilldown-chevron { color: #89b4fa; font-size: 13px; margin-left: 6px; opacity: 0.7; }
+.row-drilldown { cursor: pointer; }
+.row-drilldown:hover td { background: rgba(137,180,250,0.05); }
 
-.tag {
-  font-size: 11px;
-  border-radius: 4px;
-  padding: 1px 6px;
-  font-weight: 500;
-  margin-left: 4px;
-}
+.tag { font-size: 10px; border-radius: 3px; padding: 1px 5px; font-weight: 500; }
 .tag-sbc-only { background: rgba(250,179,135,0.2); color: #fab387; }
-.tag-sbc-also { background: rgba(148,226,213,0.15); color: #94e2d5; }
+.tag-sbc { background: rgba(148,226,213,0.15); color: #94e2d5; }
 
-.enum-inline { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
 .enum-pip {
-  font-family: monospace;
-  font-size: 11px;
-  color: #a6e3a1;
-  background: rgba(166,227,161,0.1);
-  border: 1px solid rgba(166,227,161,0.25);
-  border-radius: 3px;
-  padding: 1px 6px;
-  cursor: default;
+  font-family: monospace; font-size: 11px; color: #a6e3a1;
+  background: rgba(166,227,161,0.1); border: 1px solid rgba(166,227,161,0.25);
+  border-radius: 3px; padding: 1px 5px; cursor: default;
 }
 
-.live-value { font-family: monospace; font-size: 12px; color: #f9e2af; }
-.live-value.is-null { color: #7f849c; }
-.live-value.is-bool-true { color: #a6e3a1; }
-.live-value.is-bool-false { color: #f38ba8; }
+.live-val { font-family: monospace; font-size: 12px; }
+.live-val--null { color: #7f849c; }
+.live-val--true { color: #a6e3a1; }
+.live-val--false { color: #f38ba8; }
 </style>
