@@ -467,7 +467,8 @@
   }
 
   #connectBtn { min-width: 90px; }
-  #hostInput { width: 200px; }
+  #hostInput { width: 180px; }
+  #passwordInput { width: 100px; }
 
   .live-value { font-family: monospace; font-size: 12px; color: var(--yellow); }
   .live-value.is-null { color: var(--text-dim); }
@@ -515,6 +516,7 @@
   <div style="width:1px;height:24px;background:var(--border);flex-shrink:0"></div>
   <div style="position:relative;display:flex;align-items:center;gap:6px">
     <input type="text" id="hostInput" placeholder="printer.local or IP" title="Printer hostname or IP address">
+    <input type="password" id="passwordInput" placeholder="Password" title="Printer password (leave blank for none)">
     <button class="btn-ghost" id="scanBtn" title="Scan local network for Duet printers">Scan</button>
     <div id="scanDropdown" style="display:none;position:absolute;top:calc(100% + 6px);left:0;min-width:260px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);z-index:200;overflow:hidden">
       <div id="scanStatus" style="padding:8px 12px;font-size:12px;color:var(--text-dim);border-bottom:1px solid var(--border)">Ready to scan</div>
@@ -522,6 +524,7 @@
     </div>
   </div>
   <button class="btn" id="connectBtn">Connect</button>
+  <button class="btn-ghost" id="saveForPrinterBtn" title="Download a copy to serve from your printer's www folder — fixes HTTPS mixed-content blocking">Save for printer</button>
   <div id="modeToggle">
     <button class="mode-btn mode-active" id="modeRef" disabled>Reference</button>
     <button class="mode-btn" id="modeLive" disabled>Live</button>
@@ -572,7 +575,7 @@
 // ────────────────────────────────────────────────────────────
 // Constants
 // ────────────────────────────────────────────────────────────
-const VIEWER_VERSION = '1.3.3';
+const VIEWER_VERSION = '1.4.0';
 const OM_REPO   = 'Duet3D/ObjectModel';
 const DSF_REPO  = 'Duet3D/DuetSoftwareFramework';
 const OM_RAW    = 'https://raw.githubusercontent.com/' + OM_REPO;
@@ -595,6 +598,7 @@ let navStack = [];           // [{type, key}] — breadcrumb history
 // ── Live mode state ──────────────────────────────────────────
 let liveMode = false;
 let liveHost = '';
+let livePassword = 'reprap';
 let liveEndpoint = null;     // 'rr_model' | 'machine_status'
 let liveData = null;
 let liveConnected = false;
@@ -2145,7 +2149,9 @@ async function liveConnect() {
   const raw = document.getElementById('hostInput').value.trim();
   if (!raw) return;
   liveHost = raw.startsWith('http') ? raw.replace(/\/$/, '') : 'http://' + raw.replace(/\/$/, '');
+  livePassword = document.getElementById('passwordInput').value || 'reprap';
   localStorage.setItem('liveHost', raw);
+  localStorage.setItem('livePassword', document.getElementById('passwordInput').value);
 
   const btn = document.getElementById('connectBtn');
   btn.disabled = true;
@@ -2155,8 +2161,8 @@ async function liveConnect() {
   let connected = false;
   let lastError = '';
   try {
-    console.log('[live] trying RRF standalone:', liveHost + '/rr_connect?password=reprap');
-    const connRes = await fetchLiveJSON(liveHost + '/rr_connect?password=reprap');
+    console.log('[live] trying RRF standalone:', liveHost + '/rr_connect?password=***');
+    const connRes = await fetchLiveJSON(liveHost + '/rr_connect?password=' + encodeURIComponent(livePassword));
     console.log('[live] rr_connect response:', JSON.stringify(connRes));
     if (typeof connRes.err === 'number') {
       // Fetch full model — rr_model has a response size limit and may return a `next`
@@ -2182,7 +2188,7 @@ async function liveConnect() {
     try {
       console.log('[live] trying DSF/SBC:', liveHost + '/machine/connect');
       dsfSessionKey = null;
-      const connRes = await fetchLiveJSON(liveHost + '/machine/connect?password=reprap');
+      const connRes = await fetchLiveJSON(liveHost + '/machine/connect?password=' + encodeURIComponent(livePassword));
       console.log('[live] machine/connect response:', JSON.stringify(connRes));
       if (connRes?.sessionKey) {
         dsfSessionKey = connRes.sessionKey;
@@ -2203,10 +2209,13 @@ async function liveConnect() {
     btn.disabled = false;
     btn.textContent = 'Connect';
     const isCors = lastError.includes('CORS') || lastError.includes('Failed to fetch') || lastError.includes('NetworkError');
+    const isHttps = location.protocol === 'https:';
     const isFileOrigin = location.protocol === 'file:';
     let msg = 'Could not connect to printer at ' + liveHost;
-    if (isCors && isFileOrigin) {
-      msg += '\n\nYou are opening this viewer as a local file (file://) which browsers treat as a "null" origin. Even with M586 C"*" enabled on the printer, browsers block cross-origin requests from null origins.\n\nFix: access the viewer over HTTPS instead:\n\n  https://jaysuk.github.io/ObjectModel/viewer/\n\nThis gives it a real origin that RRF\'s CORS headers will accept.';
+    if (isCors && isHttps && liveHost.startsWith('http:')) {
+      msg += '\n\nThis is a mixed-content block. You are viewing this page over HTTPS but the printer is HTTP. Browsers block HTTPS pages from connecting to HTTP resources regardless of CORS settings.\n\nFix: use the "Save for printer" button to download a copy of this viewer, then put it in the www folder on your printer\'s SD card and open it directly from your printer.';
+    } else if (isCors && isFileOrigin) {
+      msg += '\n\nYou are opening this viewer as a local file (file://) which browsers treat as a "null" origin. Browsers block cross-origin requests from null origins.\n\nFix: use the "Save for printer" button to download a copy and serve it from your printer\'s www folder.';
     } else if (isCors) {
       msg += '\n\nThis is likely a CORS error. Make sure your printer\'s config.g contains:\n\n  M586 C"*"\n\nand that the printer has been rebooted since adding it.';
     } else {
@@ -2275,7 +2284,7 @@ async function livePoll() {
       try {
         json = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
       } catch (_) {
-        await fetchLiveJSON(liveHost + '/rr_connect?password=reprap');
+        await fetchLiveJSON(liveHost + '/rr_connect?password=' + encodeURIComponent(livePassword));
         json = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
       }
       // d99fn returns only changed fields — merge into the full model
@@ -2285,7 +2294,7 @@ async function livePoll() {
       try {
         data = await fetchLiveJSON(liveHost + '/machine/status');
       } catch (_) {
-        const connRes = await fetchLiveJSON(liveHost + '/machine/connect?password=reprap');
+        const connRes = await fetchLiveJSON(liveHost + '/machine/connect?password=' + encodeURIComponent(livePassword));
         if (connRes?.sessionKey) dsfSessionKey = connRes.sessionKey;
         data = await fetchLiveJSON(liveHost + '/machine/status');
       }
@@ -2350,6 +2359,30 @@ function switchMode(mode) {
 document.getElementById('modeRef').addEventListener('click', () => { if (liveMode) switchMode('reference'); });
 document.getElementById('modeLive').addEventListener('click', () => { if (!liveMode && liveData) switchMode('live'); });
 document.getElementById('connectBtn').addEventListener('click', liveConnect);
+
+document.getElementById('saveForPrinterBtn').addEventListener('click', () => {
+  // Fetch this page's own source and offer it as a download.
+  // When served from the printer's www folder (http://printer.local/om-viewer.html)
+  // all fetch calls are same-origin so CORS/mixed-content is irrelevant.
+  fetch(location.href)
+    .then(r => r.text())
+    .then(html => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+      a.download = 'om-viewer.html';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    })
+    .catch(() => {
+      // Fallback: if fetch of own URL fails (e.g. file://), serialize the live DOM
+      const html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+      a.download = 'om-viewer.html';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+});
 
 // ────────────────────────────────────────────────────────────
 // Live mode — value helpers
@@ -2944,6 +2977,8 @@ document.addEventListener('click', e => {
   document.getElementById('viewerVersion').textContent = 'v' + VIEWER_VERSION;
   const savedHost = localStorage.getItem('liveHost');
   if (savedHost) document.getElementById('hostInput').value = savedHost;
+  const savedPassword = localStorage.getItem('livePassword');
+  if (savedPassword) document.getElementById('passwordInput').value = savedPassword;
   await loadBranches();
   const sel = document.getElementById('branchSelect');
   if (sel.value) {
