@@ -3,21 +3,7 @@
     <!-- Toolbar -->
     <v-toolbar dense flat color="surface" class="flex-shrink-0">
       <v-toolbar-title class="subtitle-2 primary--text">Object Model Browser</v-toolbar-title>
-      <v-divider vertical class="mx-3" />
-      <span class="caption mr-2" style="color:#7f849c">Branch/Tag:</span>
-      <v-select
-        v-model="selectedRef"
-        :items="refItems"
-        dense
-        outlined
-        hide-details
-        style="max-width:200px"
-        :loading="loadingBranches"
-        :disabled="loadingBranches || loadingModel"
-      />
-      <v-btn small class="ml-2" color="primary" :disabled="!selectedRef || loadingModel" @click="doLoadModel">
-        Load
-      </v-btn>
+      <span class="caption ml-2" style="color:#7f849c">{{ modelRef }}</span>
       <v-spacer />
       <v-text-field
         v-model="searchTerm"
@@ -28,12 +14,11 @@
         placeholder="Search properties..."
         prepend-inner-icon="mdi-magnify"
         style="max-width:260px"
-        :disabled="!modelLoaded"
       />
-      <v-btn icon small :disabled="!modelLoaded" @click="expandAll" title="Expand All">
+      <v-btn icon small @click="expandAll" title="Expand All">
         <v-icon small>mdi-chevron-down-box-outline</v-icon>
       </v-btn>
-      <v-btn icon small :disabled="!modelLoaded" @click="collapseAll" title="Collapse All">
+      <v-btn icon small @click="collapseAll" title="Collapse All">
         <v-icon small>mdi-chevron-up-box-outline</v-icon>
       </v-btn>
     </v-toolbar>
@@ -42,8 +27,6 @@
     <div class="dsf-bar px-4 caption" style="display:flex;align-items:center;gap:8px;height:24px;flex-shrink:0;background:#252535;border-bottom:1px solid #3d3d5c">
       <span :class="['dsf-dot', dsfState]" />
       <span style="color:#7f849c">{{ dsfLabel }}</span>
-      <v-spacer />
-      <span v-if="loadingModel" style="color:#7f849c">{{ loadingMsg }}</span>
     </div>
 
     <!-- Main split pane -->
@@ -51,13 +34,7 @@
       <!-- Tree panel -->
       <div style="width:360px;min-width:180px;flex-shrink:0;border-right:1px solid #3d3d5c;display:flex;flex-direction:column;overflow:hidden">
         <div ref="treeScroll" style="flex:1;overflow-y:auto;padding:8px 4px">
-          <div v-if="!modelLoaded && !loadingModel" class="placeholder">
-            Select a branch and click Load
-          </div>
-          <div v-else-if="loadingModel" class="placeholder">
-            Loading…
-          </div>
-          <template v-else-if="searchTerm && searchTerm.trim()">
+          <template v-if="searchTerm && searchTerm.trim()">
             <om-search-results
               :matches="searchMatches"
               :search-term="searchTerm"
@@ -240,212 +217,13 @@
 </template>
 
 <script>
-// ── GitHub constants ────────────────────────────────────────
-const OM_REPO   = 'Duet3D/ObjectModel'
-const DSF_REPO  = 'Duet3D/DuetSoftwareFramework'
-const OM_RAW    = 'https://raw.githubusercontent.com/' + OM_REPO
-const DSF_RAW   = 'https://raw.githubusercontent.com/' + DSF_REPO
-const OM_API    = 'https://api.github.com/repos/' + OM_REPO
-const DSF_API   = 'https://api.github.com/repos/' + DSF_REPO
-const DSF_OM_PATH = 'src/DuetAPI/ObjectModel'
-const CACHE_VERSION = 'om_v2'
+import { omModel as BUNDLED_MODEL, omDescriptions as BUNDLED_DESCRIPTIONS, MODEL_REF, DSF_REF_LABEL } from './model-data.js'
 
 // ── Utility functions (standalone, no Vue dependency) ──────
 
 function pascalToCamel(s) {
   if (!s) return s
   return s.charAt(0).toLowerCase() + s.slice(1)
-}
-
-function extractXmlTag(text, tag) {
-  const re = new RegExp('<' + tag + '>([\\s\\S]*?)<\\/' + tag + '>', 'i')
-  const m = text.match(re)
-  if (!m) return null
-  return m[1].replace(/\s+/g, ' ').trim()
-}
-
-function findEnclosingType(lines, fromLine) {
-  let depth = 0
-  for (let i = fromLine - 1; i >= 0; i--) {
-    const t = lines[i].trim()
-    for (let c = t.length - 1; c >= 0; c--) {
-      if (t[c] === '}') depth++
-      else if (t[c] === '{') {
-        if (depth > 0) { depth-- }
-        else {
-          for (let k = i; k >= Math.max(0, i - 4); k--) {
-            const decl = lines[k].trim()
-            const cm = decl.match(/(?:public|internal|private)\s+(?:(?:partial|abstract|sealed|static)\s+)*class\s+(\w+)/)
-            if (cm) return cm[1]
-            const em = decl.match(/(?:public|internal|private)\s+enum\s+(\w+)/)
-            if (em) return em[1]
-          }
-          return null
-        }
-      }
-    }
-  }
-  return null
-}
-
-function parseDSFFile(src) {
-  const result = {}
-  const lines = src.split('\n')
-  let i = 0
-  while (i < lines.length) {
-    const trimmed = lines[i].trim()
-    if (trimmed.startsWith('///')) {
-      const docParts = []
-      while (i < lines.length && lines[i].trim().startsWith('///')) {
-        docParts.push(lines[i].trim().replace(/^\/\/\/\s?/, ''))
-        i++
-      }
-      const docBlock = docParts.join(' ')
-      const summary = extractXmlTag(docBlock, 'summary')
-      const remarks = extractXmlTag(docBlock, 'remarks')
-      if (!summary) continue
-
-      let j = i
-      let sbcProperty = null
-      while (j < lines.length) {
-        const t = lines[j].trim()
-        if (t === '') { j++; continue }
-        if (t.startsWith('[')) {
-          const sbcM = t.match(/^\[SbcProperty\(\s*(true|false)\s*\)\]/)
-          if (sbcM) sbcProperty = sbcM[1] === 'true'
-          j++; continue
-        }
-        break
-      }
-      if (j >= lines.length) continue
-
-      const declBlock = lines.slice(j, j + 3).map(l => l.trim()).join(' ')
-
-      const classMatch = declBlock.match(/^public\s+(?:(?:partial|abstract|sealed|static)\s+)*class\s+(\w+)/)
-      if (classMatch) {
-        const name = classMatch[1]
-        if (!result[name]) result[name] = {}
-        result[name].__class__ = { summary, remarks }
-        continue
-      }
-
-      const enumMatch = declBlock.match(/^public\s+enum\s+(\w+)/)
-      if (enumMatch) {
-        const name = enumMatch[1]
-        if (!result[name]) result[name] = {}
-        result[name].__class__ = { summary, remarks }
-        continue
-      }
-
-      const propMatch = declBlock.match(/^public\s+(?:(?:static|virtual|override|new|readonly)\s+)*[\w?<>[\],\s]+?\s+(\w+)\s*(?:\{|=>)/)
-      if (propMatch) {
-        const propName = propMatch[1]
-        if (propName === 'class' || propName === 'enum') { continue }
-        const enclosing = findEnclosingType(lines, j)
-        if (enclosing) {
-          if (!result[enclosing]) result[enclosing] = {}
-          const entry = { summary, remarks }
-          if (sbcProperty !== null) entry.sbcProperty = sbcProperty
-          result[enclosing][pascalToCamel(propName)] = entry
-        }
-        continue
-      }
-
-      const enumMemberMatch = declBlock.match(/^(\w+)\s*(?:=\s*-?\d+)?\s*,?(?:\s|$)/)
-      if (enumMemberMatch) {
-        const memberName = enumMemberMatch[1]
-        if (/^(public|private|protected|internal|static|readonly|namespace|using|return|void|class|enum|if|for|new)$/.test(memberName)) {
-          continue
-        }
-        const enclosing = findEnclosingType(lines, j)
-        if (enclosing) {
-          if (!result[enclosing]) result[enclosing] = {}
-          result[enclosing][pascalToCamel(memberName)] = { summary }
-          result[enclosing][memberName] = { summary }
-        }
-      }
-      continue
-    }
-    i++
-  }
-  return result
-}
-
-function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ''))
-    .replace(/\/\/[^\n]*/g, '')
-}
-
-function parseOMFile(src, filePath) {
-  const clean = stripComments(src)
-  const classes = {}
-  const enums = {}
-
-  const enumRe = /export\s+(?:const\s+)?enum\s+(\w+)\s*\{([^}]*)\}/g
-  let m
-  while ((m = enumRe.exec(clean)) !== null) {
-    const name = m[1]
-    const body = m[2]
-    const members = []
-    const memberRe = /(\w+)\s*(?:=\s*([^,\n}]+))?/g
-    let mm
-    while ((mm = memberRe.exec(body)) !== null) {
-      if (!mm[1]) continue
-      members.push({ key: mm[1], value: mm[2] ? mm[2].trim() : undefined })
-    }
-    if (members.length > 0) enums[name] = { name, members, file: filePath }
-  }
-
-  const classRe = /export\s+class\s+(\w+)(?:\s+extends\s+(\w+))?\s*\{/g
-  while ((m = classRe.exec(clean)) !== null) {
-    const name = m[1]
-    const parent = m[2] || null
-    const startIdx = m.index + m[0].length
-    let depth = 1, ci = startIdx
-    while (ci < clean.length && depth > 0) {
-      if (clean[ci] === '{') depth++
-      else if (clean[ci] === '}') depth--
-      ci++
-    }
-    const body = clean.slice(startIdx, ci - 1)
-    const props = parseClassBody(body)
-    if (props.length > 0 || name !== 'ModelObject') {
-      classes[name] = { name, parent, props, file: filePath }
-    }
-  }
-
-  return { classes, enums }
-}
-
-function parseClassBody(body) {
-  const props = []
-  const ctorRe = /constructor\s*\([^)]*\)\s*\{/g
-  let cleaned = body
-  let m
-  while ((m = ctorRe.exec(cleaned)) !== null) {
-    const start = m.index
-    let depth = 1, ci = start + m[0].length
-    while (ci < cleaned.length && depth > 0) {
-      if (cleaned[ci] === '{') depth++
-      else if (cleaned[ci] === '}') depth--
-      ci++
-    }
-    cleaned = cleaned.slice(0, start) + cleaned.slice(ci)
-    ctorRe.lastIndex = start
-  }
-  const propRe = /^\s*(readonly\s+)?(\w+)\s*:\s*([^=;\n]+?)\s*(?:=\s*([^;\n]+?))?\s*;/gm
-  while ((m = propRe.exec(cleaned)) !== null) {
-    const readonly = !!m[1]
-    const name = m[2]
-    if (['constructor', 'super', 'return', 'this', 'static'].includes(name)) continue
-    let typeStr = m[3].trim().replace(/\s+/g, ' ')
-    const defaultVal = m[4] ? m[4].trim() : undefined
-    const nullable = typeStr.includes('| null') || typeStr.includes('null |')
-    const cleanType = typeStr.replace(/\s*\|\s*null/g, '').replace(/null\s*\|\s*/g, '').trim()
-    props.push({ name, type: cleanType, nullable, readonly, default: defaultVal })
-  }
-  return props
 }
 
 function resolveCollectionType(typeStr) {
@@ -471,47 +249,6 @@ function isDictType(t) {
 
 function shortType(t) {
   return t.replace('ModelCollection', 'Collection').replace('ModelDictionary', 'Dict').replace('ModelSet', 'Set')
-}
-
-async function fetchJSON(url) {
-  const r = await fetch(url, { headers: { Accept: 'application/vnd.github.v3+json' } })
-  if (!r.ok) throw new Error(`HTTP ${r.status}: ${url}`)
-  return r.json()
-}
-
-async function fetchText(url) {
-  const r = await fetch(url)
-  if (!r.ok) throw new Error(`HTTP ${r.status}: ${url}`)
-  return r.text()
-}
-
-function cacheKey(omSha, dsfSha) {
-  return `${CACHE_VERSION}_${omSha}_${dsfSha || 'none'}`
-}
-
-function cacheSave(omSha, dsfSha, dsfRef, modelData, descsData, dsfLabel) {
-  const prefix = CACHE_VERSION + '_'
-  const toRemove = []
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i)
-    if (k && k.startsWith(prefix)) toRemove.push(k)
-  }
-  toRemove.forEach(k => localStorage.removeItem(k))
-  const key = cacheKey(omSha, dsfSha)
-  try {
-    localStorage.setItem(key, JSON.stringify({ omSha, dsfSha, dsfRef, model: modelData, descriptions: descsData, dsfLabel }))
-  } catch (e) {
-    console.warn('[om-browser] cache save failed:', e.message)
-  }
-}
-
-function cacheLoad(omSha, dsfSha) {
-  const key = cacheKey(omSha, dsfSha)
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return null
-    return JSON.parse(raw)
-  } catch (e) { return null }
 }
 
 // ── Inline tree node component ─────────────────────────────
@@ -638,20 +375,14 @@ export default {
 
   data() {
     return {
-      // Ref selector
-      selectedRef: 'v3.6-dev',
-      refItems: [],
-      loadingBranches: false,
-
-      // Model
-      omModel: { classes: {}, enums: {} },
-      descriptions: {},
-      loadingModel: false,
-      loadingMsg: '',
+      // Model — pre-built at plugin build time, no runtime fetching needed
+      omModel: BUNDLED_MODEL,
+      descriptions: BUNDLED_DESCRIPTIONS,
+      modelRef: MODEL_REF,
 
       // DSF indicator
-      dsfState: 'none',
-      dsfLabel: 'DSF descriptions: —',
+      dsfState: 'ok',
+      dsfLabel: `DSF descriptions: ${DSF_REF_LABEL} (${Object.keys(BUNDLED_DESCRIPTIONS).length} types)`,
 
       // Tree state
       openNodes: {},
@@ -745,13 +476,9 @@ export default {
     }
   },
 
-  async mounted() {
+  mounted() {
     window.addEventListener('mousemove', this.onMouseMove)
     window.addEventListener('mouseup', this.onMouseUp)
-    await this.loadBranches()
-    if (this.selectedRef) {
-      await this.doLoadModel()
-    }
   },
 
   beforeDestroy() {
@@ -760,211 +487,6 @@ export default {
   },
 
   methods: {
-    // ── GitHub loading ─────────────────────────────────────
-
-    async loadBranches() {
-      this.loadingBranches = true
-      try {
-        const [branches, tags] = await Promise.all([
-          fetchJSON(`${OM_API}/branches?per_page=100`),
-          fetchJSON(`${OM_API}/tags?per_page=100`)
-        ])
-        const items = []
-        if (branches.length) {
-          items.push({ header: 'Branches' })
-          branches.forEach(b => items.push({ text: b.name, value: b.name }))
-        }
-        if (tags.length) {
-          items.push({ header: 'Tags' })
-          tags.sort((a, b) => b.name.localeCompare(a.name, undefined, { numeric: true }))
-          tags.forEach(t => items.push({ text: t.name, value: t.name }))
-        }
-        this.refItems = items
-      } catch (e) {
-        console.error('[om-browser] loadBranches failed:', e)
-      }
-      this.loadingBranches = false
-    },
-
-    async doLoadModel() {
-      if (!this.selectedRef) return
-      this.loadingModel = true
-      this.loadingMsg = 'Loading…'
-      this.omModel = { classes: {}, enums: {} }
-      this.descriptions = {}
-      this.selectedClassName = null
-      this.navStack = []
-      this.openNodes = {}
-      this.setDSFIndicator('none', 'DSF descriptions: searching…')
-
-      try {
-        const ref = this.selectedRef
-
-        // Resolve SHAs for cache
-        let omSha = null, dsfRef = null, dsfSha = null
-        this.loadingMsg = 'Checking for updates…'
-        try {
-          const data = await fetchJSON(`https://api.github.com/repos/${OM_REPO}/commits/${encodeURIComponent(ref)}?per_page=1`)
-          omSha = data.sha
-        } catch (e) { console.warn('[om-browser] OM SHA resolve failed:', e.message) }
-
-        try {
-          dsfRef = await this.findDSFRef(ref)
-          if (dsfRef) {
-            const data = await fetchJSON(`https://api.github.com/repos/${DSF_REPO}/commits/${encodeURIComponent(dsfRef)}?per_page=1`)
-            dsfSha = data.sha
-          }
-        } catch (e) { console.warn('[om-browser] DSF SHA resolve failed:', e.message) }
-
-        // Try cache
-        if (omSha) {
-          const cached = cacheLoad(omSha, dsfSha)
-          if (cached) {
-            this.loadingMsg = 'Loading from cache…'
-            await this.$nextTick()
-            this.omModel = cached.model
-            this.descriptions = cached.descriptions || {}
-            for (const cls of Object.values(this.omModel.classes)) {
-              if (cls.parent && cls.parent !== 'ModelObject' && this.omModel.classes[cls.parent])
-                cls.parentRef = this.omModel.classes[cls.parent]
-            }
-            if (cached.dsfLabel) this.setDSFIndicator('ok', cached.dsfLabel)
-            else this.setDSFIndicator('none', 'DSF descriptions: no matching branch')
-            this.loadingModel = false
-            return
-          }
-        }
-
-        // Fetch OM TypeScript files
-        this.loadingMsg = 'Fetching OM file list…'
-        const omTree = await fetchJSON(`${OM_API}/git/trees/${encodeURIComponent(ref)}?recursive=1`)
-        const omFiles = omTree.tree.filter(f => f.type === 'blob' && f.path.startsWith('src/') && f.path.endsWith('.ts')).map(f => f.path)
-        const total = omFiles.length
-        let done = 0
-
-        const omResults = []
-        for (let i = 0; i < omFiles.length; i += 10) {
-          this.loadingMsg = `Fetching OM source… (${done}/${total})`
-          const batch = omFiles.slice(i, i + 10)
-          const texts = await Promise.all(
-            batch.map(f => fetchText(`${OM_RAW}/${encodeURIComponent(ref)}/${f}`).then(t => ({ path: f, text: t })))
-          )
-          omResults.push(...texts)
-          done += batch.length
-        }
-
-        this.loadingMsg = 'Parsing TypeScript…'
-        await this.$nextTick()
-        const model = { classes: {}, enums: {} }
-        for (const { path, text } of omResults) {
-          try {
-            const parsed = parseOMFile(text, path)
-            Object.assign(model.classes, parsed.classes)
-            Object.assign(model.enums, parsed.enums)
-          } catch (e) { console.warn('[om-browser] OM parse error:', path, e) }
-        }
-        for (const cls of Object.values(model.classes)) {
-          if (cls.parent && cls.parent !== 'ModelObject' && model.classes[cls.parent])
-            cls.parentRef = model.classes[cls.parent]
-        }
-
-        // Fetch DSF descriptions
-        let dsfLabel = null
-        if (dsfRef) {
-          try {
-            this.loadingMsg = `Loading DSF descriptions (${dsfRef})…`
-            await this.$nextTick()
-            const dsfTree = await fetchJSON(`${DSF_API}/git/trees/${encodeURIComponent(dsfRef)}?recursive=1`)
-            const dsfFiles = dsfTree.tree
-              .filter(f => f.type === 'blob' && f.path.startsWith(DSF_OM_PATH + '/') && f.path.endsWith('.cs'))
-              .map(f => f.path)
-
-            const dsfTotal = dsfFiles.length
-            let dsfDone = 0
-            const dsfResults = []
-            for (let i = 0; i < dsfFiles.length; i += 10) {
-              this.loadingMsg = `Fetching DSF source… (${dsfDone}/${dsfTotal})`
-              const batch = dsfFiles.slice(i, i + 10)
-              const texts = await Promise.all(
-                batch.map(f => fetchText(`${DSF_RAW}/${encodeURIComponent(dsfRef)}/${f}`).then(t => ({ path: f, text: t })))
-              )
-              dsfResults.push(...texts)
-              dsfDone += batch.length
-            }
-
-            this.loadingMsg = 'Parsing DSF descriptions…'
-            await this.$nextTick()
-            const descriptions = {}
-            for (const { path, text } of dsfResults) {
-              try {
-                const parsed = parseDSFFile(text)
-                for (const [name, props] of Object.entries(parsed)) {
-                  if (!descriptions[name]) descriptions[name] = {}
-                  Object.assign(descriptions[name], props)
-                }
-              } catch (e) { console.warn('[om-browser] DSF parse error:', path, e) }
-            }
-            this.descriptions = descriptions
-
-            const descCount = Object.keys(descriptions).length
-            dsfLabel = `DSF descriptions: ${dsfRef} (${descCount} types)`
-            this.setDSFIndicator('ok', dsfLabel)
-          } catch (e) {
-            console.warn('[om-browser] DSF load failed:', e)
-            this.setDSFIndicator('error', 'DSF descriptions: failed')
-          }
-        } else {
-          this.setDSFIndicator('none', 'DSF descriptions: no matching branch')
-        }
-
-        this.omModel = model
-
-        // Cache (strip circular parentRef)
-        if (omSha) {
-          const modelForCache = {
-            classes: Object.fromEntries(Object.entries(model.classes).map(([k, v]) => {
-              const { parentRef, ...rest } = v
-              return [k, rest]
-            })),
-            enums: model.enums
-          }
-          cacheSave(omSha, dsfSha, dsfRef, modelForCache, this.descriptions, dsfLabel)
-        }
-
-      } catch (e) {
-        console.error('[om-browser] loadModel failed:', e)
-        this.setDSFIndicator('error', 'Load failed: ' + e.message)
-      }
-
-      this.loadingModel = false
-    },
-
-    async findDSFRef(omRef) {
-      const [branches, tags] = await Promise.all([
-        fetchJSON(`${DSF_API}/branches?per_page=100`),
-        fetchJSON(`${DSF_API}/tags?per_page=100`)
-      ])
-      const branchNames = branches.map(b => b.name)
-      const tagNames = tags.map(t => t.name)
-      const all = [...branchNames, ...tagNames]
-
-      if (all.includes(omRef)) return omRef
-
-      const verMatch = omRef.match(/v?(\d+\.\d+)/)
-      if (!verMatch) return null
-      const minorVer = verMatch[1]
-
-      const devBranch = `v${minorVer}-dev`
-      if (branchNames.includes(devBranch)) return devBranch
-
-      const matchingTags = tagNames
-        .filter(t => t.startsWith(`v${minorVer}.`) || t === `v${minorVer}`)
-        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
-      if (matchingTags.length) return matchingTags[0]
-
-      return null
-    },
-
     setDSFIndicator(state, label) {
       this.dsfState = state
       this.dsfLabel = label
