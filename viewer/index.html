@@ -2106,6 +2106,32 @@ async function fetchLiveJSON(url, extraHeaders = {}) {
   }
 }
 
+// RRF's rr_model response is size-limited. When the JSON is too large it returns
+// a `next` key with the name of the next top-level key to request. We handle this
+// by first fetching the root (which gives us top-level keys + partial data), then
+// fetching each top-level section individually with key=<name> to get full depth.
+async function fetchFullRRModel() {
+  // Step 1: get root-level keys via a shallow fetch
+  const rootRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99vn');
+  if (!rootRes?.result) return null;
+  let combined = rootRes.result;
+  const topKeys = Object.keys(combined);
+  console.log('[live] rr_model top-level keys:', topKeys);
+
+  // Step 2: fetch each top-level section individually to ensure full depth
+  for (const key of topKeys) {
+    try {
+      const res = await fetchLiveJSON(liveHost + '/rr_model?key=' + key + '&flags=d99vn');
+      if (res?.result !== undefined) {
+        combined[key] = res.result;
+      }
+    } catch (e) {
+      console.warn('[live] rr_model key=' + key + ' failed:', e.message);
+    }
+  }
+  return combined;
+}
+
 async function liveConnect() {
   const raw = document.getElementById('hostInput').value.trim();
   if (!raw) return;
@@ -2123,15 +2149,15 @@ async function liveConnect() {
     const connRes = await fetchLiveJSON(liveHost + '/rr_connect?password=reprap');
     console.log('[live] rr_connect response:', JSON.stringify(connRes));
     if (typeof connRes.err === 'number') {
-      // d99vn = deep, verbose (includes infrequently-changing fields), include nulls
-      const modelRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99vn');
-      console.log('[live] rr_model keys:', Object.keys(modelRes || {}));
-      if (modelRes?.result) {
+      // Fetch full model — rr_model has a response size limit and may return a `next`
+      // key indicating more data. Fetch each top-level key individually to get everything.
+      const fullModel = await fetchFullRRModel();
+      if (fullModel) {
         liveEndpoint = 'rr_model';
-        liveData = modelRes.result;
+        liveData = fullModel;
         connected = true;
       } else {
-        lastError = 'rr_model returned no result key. Got: ' + JSON.stringify(modelRes).slice(0, 200);
+        lastError = 'rr_model returned no data';
       }
     } else {
       lastError = 'rr_connect err field unexpected: ' + JSON.stringify(connRes);
