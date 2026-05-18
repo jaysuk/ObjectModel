@@ -594,6 +594,7 @@ let liveNavStack = [];       // [{path, label}]
 let liveLastDetailPath = null;
 let liveLastDetailLabel = null;
 const liveValueCells = new Map(); // valuePath → TD element
+let dsfSessionKey = null;    // X-Session-Key for DSF/SBC
 
 // ────────────────────────────────────────────────────────────
 // Utilities
@@ -2089,11 +2090,13 @@ document.addEventListener('mouseup', () => {
 // ────────────────────────────────────────────────────────────
 // Live mode — networking
 // ────────────────────────────────────────────────────────────
-async function fetchLiveJSON(url) {
+async function fetchLiveJSON(url, extraHeaders = {}) {
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), 5000);
   try {
-    const r = await fetch(url, { signal: controller.signal });
+    const headers = { ...extraHeaders };
+    if (dsfSessionKey) headers['X-Session-Key'] = dsfSessionKey;
+    const r = await fetch(url, { signal: controller.signal, headers });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
   } finally {
@@ -2125,14 +2128,19 @@ async function liveConnect() {
     }
   } catch (_) {}
 
-  // Try DSF/SBC
+  // Try DSF/SBC — requires /machine/connect to get session key first
   if (!connected) {
     try {
-      const data = await fetchLiveJSON(liveHost + '/machine/status');
-      if (data && typeof data === 'object') {
-        liveEndpoint = 'machine_status';
-        liveData = data;
-        connected = true;
+      dsfSessionKey = null;
+      const connRes = await fetchLiveJSON(liveHost + '/machine/connect?password=reprap');
+      if (connRes?.sessionKey) {
+        dsfSessionKey = connRes.sessionKey;
+        const data = await fetchLiveJSON(liveHost + '/machine/status');
+        if (data && typeof data === 'object') {
+          liveEndpoint = 'machine_status';
+          liveData = data;
+          connected = true;
+        }
       }
     } catch (_) {}
   }
@@ -2162,6 +2170,7 @@ function liveDisconnect() {
   liveConnected = false;
   liveEndpoint = null;
   liveData = null;
+  dsfSessionKey = null;
 
   const btn = document.getElementById('connectBtn');
   btn.textContent = 'Connect';
@@ -2192,13 +2201,19 @@ async function livePoll() {
       try {
         json = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
       } catch (_) {
-        // Try re-establishing the session
         await fetchLiveJSON(liveHost + '/rr_connect?password=reprap');
         json = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
       }
       data = json.result;
     } else {
-      data = await fetchLiveJSON(liveHost + '/machine/status');
+      // DSF session can expire — reconnect transparently if needed
+      try {
+        data = await fetchLiveJSON(liveHost + '/machine/status');
+      } catch (_) {
+        const connRes = await fetchLiveJSON(liveHost + '/machine/connect?password=reprap');
+        if (connRes?.sessionKey) dsfSessionKey = connRes.sessionKey;
+        data = await fetchLiveJSON(liveHost + '/machine/status');
+      }
     }
     liveData = data;
     if (!liveConnected) {
@@ -2674,14 +2689,15 @@ async function probeDuet(ip) {
     }
   } catch (_) {}
 
-  // Try DSF/SBC — /machine/noop is a lightweight ping
+  // Try DSF/SBC — /machine/connect returns sessionKey if it's a DSF board
   try {
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), 1500);
-    const r = await fetch(base + '/machine/noop', { signal: ctrl.signal });
+    const r = await fetch(base + '/machine/connect?password=reprap', { signal: ctrl.signal });
     clearTimeout(tid);
     if (r.ok) {
-      return { ip, boardType: 'Duet (SBC/DSF)', mode: 'sbc' };
+      const j = await r.json();
+      if (j?.sessionKey) return { ip, boardType: 'Duet (SBC/DSF)', mode: 'sbc' };
     }
   } catch (_) {}
 
