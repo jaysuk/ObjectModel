@@ -455,15 +455,26 @@
   .mode-btn.mode-active:hover { filter: brightness(1.1); }
   #modeToggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
 
-  #liveWarning {
+  #liveWarning, #httpsWarning {
     display: none;
-    background: rgba(243,139,168,0.12);
     border-bottom: 1px solid rgba(243,139,168,0.3);
     color: var(--red);
     font-size: 12px;
     padding: 5px 16px;
     text-align: center;
     flex-shrink: 0;
+  }
+  #liveWarning { background: rgba(243,139,168,0.12); }
+  #httpsWarning {
+    background: rgba(250,179,135,0.12);
+    border-color: rgba(250,179,135,0.3);
+    color: var(--yellow);
+  }
+  #connectProgress {
+    display: none;
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
   }
 
   #connectBtn { min-width: 90px; }
@@ -524,6 +535,7 @@
     </div>
   </div>
   <button class="btn" id="connectBtn">Connect</button>
+  <span id="connectProgress"></span>
   <button class="btn-ghost" id="saveForPrinterBtn" title="Download a copy to serve from your printer's www folder — fixes HTTPS mixed-content blocking">Save for printer</button>
   <div id="modeToggle">
     <button class="mode-btn mode-active" id="modeRef" disabled>Reference</button>
@@ -540,6 +552,7 @@
   </span>
 </header>
 
+<div id="httpsWarning">⚠ You are viewing this page over HTTPS. Browsers block HTTPS pages from connecting to HTTP printers (mixed content). Use the <strong>Save for printer</strong> button, place <code>om-viewer.html</code> in your printer's <code>www</code> folder, and open it directly from your printer.</div>
 <div id="liveWarning">⚠ Connection lost — showing last known values. Retrying…</div>
 
 <div id="main">
@@ -575,7 +588,7 @@
 // ────────────────────────────────────────────────────────────
 // Constants
 // ────────────────────────────────────────────────────────────
-const VIEWER_VERSION = '1.4.2';
+const VIEWER_VERSION = '1.5.0';
 const OM_REPO   = 'Duet3D/ObjectModel';
 const DSF_REPO  = 'Duet3D/DuetSoftwareFramework';
 const OM_RAW    = 'https://raw.githubusercontent.com/' + OM_REPO;
@@ -608,6 +621,7 @@ let liveLastDetailPath = null;
 let liveLastDetailLabel = null;
 const liveValueCells = new Map(); // valuePath → TD element
 let dsfSessionKey = null;    // X-Session-Key for DSF/SBC
+let lastSeqs = {};           // seqs from last poll — detect which keys changed
 
 // ────────────────────────────────────────────────────────────
 // Utilities
@@ -2143,8 +2157,14 @@ async function queryModelKey(key, forceArray = false) {
 // (mirroring the DWC PollConnector approach). This avoids the response size cap
 // that causes partial results when fetching the whole model in one request.
 async function fetchFullRRModel() {
+  const prog = document.getElementById('connectProgress');
+  const setProgress = (msg) => { if (prog) { prog.style.display = ''; prog.textContent = msg; } };
+  const clearProgress = () => { if (prog) prog.style.display = 'none'; };
+
   // Get seqs first — tells us which keys exist and their current sequence numbers
+  setProgress('Reading keys…');
   const seqsRes = await fetchLiveJSON(liveHost + '/rr_model?key=seqs');
+  if (seqsRes?.result) lastSeqs = seqsRes.result;
   const topKeys = seqsRes?.result ? Object.keys(seqsRes.result).filter(k => k !== 'reply') : null;
 
   // Fall back to a root fetch to discover keys if seqs isn't available
@@ -2152,11 +2172,12 @@ async function fetchFullRRModel() {
   console.log('[live] model keys to fetch:', keyList);
 
   const combined = {};
-  for (const key of keyList) {
+  for (let i = 0; i < keyList.length; i++) {
+    const key = keyList[i];
+    setProgress(key + '… (' + (i + 1) + '/' + keyList.length + ')');
     try {
-      // move.axes can be a long array — force array pagination
-      combined[key] = await queryModelKey(key, key === 'move');
-      // If move, also individually fetch axes to ensure full pagination
+      combined[key] = await queryModelKey(key);
+      // move.axes can exceed response size — fetch separately with array pagination
       if (key === 'move' && combined.move?.axes !== undefined) {
         combined.move.axes = await queryModelKey('move.axes', true);
       }
@@ -2164,6 +2185,7 @@ async function fetchFullRRModel() {
       console.warn('[live] failed to fetch key=' + key + ':', e.message);
     }
   }
+  clearProgress();
   return combined;
 }
 
@@ -2288,7 +2310,12 @@ function stopLivePoll() {
 
 // Deep-merge patch into base object in-place (RRF poll updates are partial patches)
 function deepMerge(base, patch) {
-  if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) return patch;
+  if (patch === null || typeof patch !== 'object') return patch;
+  // Merge arrays element-by-element so static fields in array objects are preserved
+  if (Array.isArray(patch)) {
+    if (!Array.isArray(base) || base.length !== patch.length) return patch;
+    return patch.map((p, i) => deepMerge(base[i], p));
+  }
   if (base === null || typeof base !== 'object' || Array.isArray(base)) return patch;
   const out = Object.assign({}, base);
   for (const key of Object.keys(patch)) {
@@ -2299,18 +2326,40 @@ function deepMerge(base, patch) {
 
 async function livePoll() {
   try {
-    let data;
+    let data = liveData;
     if (liveEndpoint === 'rr_model') {
-      // RRF sessions can expire — reconnect transparently if needed
-      let json;
+      // Fetch live-changing fields + new seqs in one cheap request
+      let pollRes;
       try {
-        json = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
+        pollRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
       } catch (_) {
+        // Session expired — reconnect and retry
         await fetchLiveJSON(liveHost + '/rr_connect?password=' + encodeURIComponent(livePassword));
-        json = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
+        pollRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
       }
-      // d99fn returns only changed fields — merge into the full model
-      data = deepMerge(liveData, json.result);
+      // Merge live patch (temperatures, positions, etc.) into full model
+      data = deepMerge(liveData, pollRes.result);
+
+      // Check seqs — re-fetch any key whose sequence number has changed
+      const seqsRes = await fetchLiveJSON(liveHost + '/rr_model?key=seqs');
+      if (seqsRes?.result) {
+        const newSeqs = seqsRes.result;
+        for (const key of Object.keys(newSeqs)) {
+          if (key === 'reply') continue;
+          if (newSeqs[key] !== lastSeqs[key]) {
+            try {
+              const updated = await queryModelKey(key);
+              if (key === 'move' && updated?.axes !== undefined) {
+                updated.axes = await queryModelKey('move.axes', true);
+              }
+              data[key] = updated;
+            } catch (e) {
+              console.warn('[live] seq re-fetch failed for key=' + key, e.message);
+            }
+          }
+        }
+        lastSeqs = newSeqs;
+      }
     } else {
       // DSF session can expire — reconnect transparently if needed
       try {
@@ -2339,7 +2388,7 @@ async function livePoll() {
     }
   } finally {
     if (livePollTimer !== null || liveEndpoint !== null) {
-      livePollTimer = setTimeout(livePoll, 1000);
+      livePollTimer = setTimeout(livePoll, 250);
     }
   }
 }
@@ -2997,6 +3046,9 @@ document.addEventListener('click', e => {
 // ────────────────────────────────────────────────────────────
 (async () => {
   document.getElementById('viewerVersion').textContent = 'v' + VIEWER_VERSION;
+  if (location.protocol === 'https:') {
+    document.getElementById('httpsWarning').style.display = '';
+  }
   const savedHost = localStorage.getItem('liveHost');
   if (savedHost) document.getElementById('hostInput').value = savedHost;
   const savedPassword = localStorage.getItem('livePassword');
