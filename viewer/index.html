@@ -439,25 +439,75 @@
     transition: background 0.15s;
   }
   #resizer:hover, #resizer.dragging { background: var(--accent); }
+
+  /* ── live mode ── */
+  .mode-btn { border-radius: 0; border: none; font-size: 12px; padding: 5px 12px; cursor: pointer; background: transparent; color: var(--text); }
+  .mode-btn:hover:not(:disabled) { color: var(--accent); }
+  .mode-btn:disabled { opacity: 0.35; cursor: default; }
+  .mode-btn.mode-active { background: var(--accent); color: #1e1e2e; }
+  .mode-btn.mode-active:hover { filter: brightness(1.1); }
+  #modeToggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+
+  #liveWarning {
+    display: none;
+    background: rgba(243,139,168,0.12);
+    border-bottom: 1px solid rgba(243,139,168,0.3);
+    color: var(--red);
+    font-size: 12px;
+    padding: 5px 16px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  #connectBtn { min-width: 90px; }
+  #hostInput { width: 200px; }
+
+  .live-value { font-family: monospace; font-size: 12px; color: var(--yellow); }
+  .live-value.is-null { color: var(--text-dim); }
+  .live-value.is-bool-true { color: var(--green); }
+  .live-value.is-bool-false { color: var(--red); }
+
+  @keyframes live-flash { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+  .live-updated { animation: live-flash 0.5s ease; }
+
+  .prop-table th.val-col, .prop-table td.val-col {
+    color: var(--yellow);
+    font-family: monospace;
+    font-size: 12px;
+    white-space: nowrap;
+  }
 </style>
 </head>
 <body>
 
 <header>
   <h1>Duet3D Object Model Viewer</h1>
-  <label for="branchSelect" style="font-size:12px;color:var(--text-dim)">Branch/Tag:</label>
-  <select id="branchSelect" disabled>
-    <option value="">Loading...</option>
-  </select>
-  <button class="btn" id="loadBtn" disabled>Load</button>
-  <div class="header-sep"></div>
-  <button class="btn-ghost" id="expandAllBtn" disabled>Expand All</button>
-  <button class="btn-ghost" id="collapseAllBtn" disabled>Collapse All</button>
-  <div style="position:relative;display:flex;align-items:center">
-    <input type="text" id="searchBox" placeholder="Search properties..." disabled style="padding-right:28px">
-    <button id="searchClear" title="Clear search" style="position:absolute;right:6px;background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:16px;line-height:1;padding:0;display:none">×</button>
+  <span id="refControls" style="display:contents">
+    <label for="branchSelect" style="font-size:12px;color:var(--text-dim)">Branch/Tag:</label>
+    <select id="branchSelect" disabled>
+      <option value="">Loading...</option>
+    </select>
+    <button class="btn" id="loadBtn" disabled>Load</button>
+  </span>
+  <div style="width:1px;height:24px;background:var(--border);flex-shrink:0"></div>
+  <input type="text" id="hostInput" placeholder="printer.local or IP" title="Printer hostname or IP address">
+  <button class="btn" id="connectBtn">Connect</button>
+  <div id="modeToggle">
+    <button class="mode-btn mode-active" id="modeRef" disabled>Reference</button>
+    <button class="mode-btn" id="modeLive" disabled>Live</button>
   </div>
+  <div class="header-sep"></div>
+  <span id="refOnlyControls" style="display:contents">
+    <button class="btn-ghost" id="expandAllBtn" disabled>Expand All</button>
+    <button class="btn-ghost" id="collapseAllBtn" disabled>Collapse All</button>
+    <div style="position:relative;display:flex;align-items:center">
+      <input type="text" id="searchBox" placeholder="Search properties..." disabled style="padding-right:28px">
+      <button id="searchClear" title="Clear search" style="position:absolute;right:6px;background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:16px;line-height:1;padding:0;display:none">×</button>
+    </div>
+  </span>
 </header>
+
+<div id="liveWarning">⚠ Connection lost — showing last known values. Retrying…</div>
 
 <div id="main">
   <div id="treePanel">
@@ -510,6 +560,18 @@ let searchTerm = '';
 let lastDetailType = null;  // 'class' | 'enum'
 let lastDetailKey = null;   // class or enum name currently shown in detail panel
 let navStack = [];           // [{type, key}] — breadcrumb history
+
+// ── Live mode state ──────────────────────────────────────────
+let liveMode = false;
+let liveHost = '';
+let liveEndpoint = null;     // 'rr_model' | 'machine_status'
+let liveData = null;
+let liveConnected = false;
+let livePollTimer = null;
+let liveNavStack = [];       // [{path, label}]
+let liveLastDetailPath = null;
+let liveLastDetailLabel = null;
+const liveValueCells = new Map(); // valuePath → TD element
 
 // ────────────────────────────────────────────────────────────
 // Utilities
@@ -1404,6 +1466,7 @@ function restoreDetailState(state) {
 
 // Browser back/forward
 window.addEventListener('popstate', e => {
+  if (liveMode) return;
   if (!e.state || !model.classes['ObjectModel']) return;
   restoreDetailState(e.state);
 });
@@ -2000,6 +2063,547 @@ document.addEventListener('mouseup', () => {
   resizing = false; resizer.classList.remove('dragging');
   document.body.style.cursor = ''; document.body.style.userSelect = '';
 });
+
+// ────────────────────────────────────────────────────────────
+// Live mode — networking
+// ────────────────────────────────────────────────────────────
+async function fetchLiveJSON(url) {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), 5000);
+  try {
+    const r = await fetch(url, { signal: controller.signal });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+async function liveConnect() {
+  const raw = document.getElementById('hostInput').value.trim();
+  if (!raw) return;
+  liveHost = raw.startsWith('http') ? raw.replace(/\/$/, '') : 'http://' + raw.replace(/\/$/, '');
+
+  const btn = document.getElementById('connectBtn');
+  btn.disabled = true;
+  btn.textContent = 'Connecting…';
+
+  const [rrResult, machineResult] = await Promise.allSettled([
+    fetchLiveJSON(liveHost + '/rr_model?flags=d99fn'),
+    fetchLiveJSON(liveHost + '/machine/status')
+  ]);
+
+  if (rrResult.status === 'fulfilled' && rrResult.value?.result) {
+    liveEndpoint = 'rr_model';
+    liveData = rrResult.value.result;
+  } else if (machineResult.status === 'fulfilled') {
+    liveEndpoint = 'machine_status';
+    liveData = machineResult.value;
+  } else {
+    btn.disabled = false;
+    btn.textContent = 'Connect';
+    showError('Could not connect to printer at ' + liveHost +
+      '\n\nCheck the address and ensure the printer is reachable from this browser.');
+    return;
+  }
+
+  liveConnected = true;
+  btn.disabled = false;
+  btn.textContent = 'Disconnect';
+  btn.onclick = liveDisconnect;
+
+  document.getElementById('modeLive').disabled = false;
+  document.getElementById('modeRef').disabled = false;
+
+  setDSFIndicator('ok', 'Live: ' + (liveEndpoint === 'rr_model' ? 'RRF standalone' : 'DSF/SBC'));
+  startLivePoll();
+}
+
+function liveDisconnect() {
+  stopLivePoll();
+  liveConnected = false;
+  liveEndpoint = null;
+  liveData = null;
+
+  const btn = document.getElementById('connectBtn');
+  btn.textContent = 'Connect';
+  btn.onclick = null;
+
+  document.getElementById('modeLive').disabled = true;
+  document.getElementById('liveWarning').style.display = 'none';
+  setDSFIndicator('none', 'DSF descriptions: —');
+
+  if (liveMode) switchMode('reference');
+}
+
+function startLivePoll() {
+  stopLivePoll();
+  livePollTimer = setTimeout(livePoll, 1000);
+}
+
+function stopLivePoll() {
+  if (livePollTimer !== null) { clearTimeout(livePollTimer); livePollTimer = null; }
+}
+
+async function livePoll() {
+  try {
+    let data;
+    if (liveEndpoint === 'rr_model') {
+      const json = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
+      data = json.result;
+    } else {
+      data = await fetchLiveJSON(liveHost + '/machine/status');
+    }
+    liveData = data;
+    if (!liveConnected) {
+      liveConnected = true;
+      document.getElementById('liveWarning').style.display = 'none';
+      setDSFIndicator('ok', 'Live: ' + (liveEndpoint === 'rr_model' ? 'RRF standalone' : 'DSF/SBC'));
+    }
+    if (liveMode) {
+      updateLiveTreeValues(data);
+      updateLiveDetailValues(data);
+    }
+  } catch (e) {
+    if (liveConnected) {
+      liveConnected = false;
+      if (liveMode) document.getElementById('liveWarning').style.display = '';
+      setDSFIndicator('error', 'Live: disconnected');
+    }
+  } finally {
+    if (livePollTimer !== null || liveEndpoint !== null) {
+      livePollTimer = setTimeout(livePoll, 1000);
+    }
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// Live mode — mode switching
+// ────────────────────────────────────────────────────────────
+function switchMode(mode) {
+  liveMode = (mode === 'live');
+  document.getElementById('modeRef').classList.toggle('mode-active', !liveMode);
+  document.getElementById('modeLive').classList.toggle('mode-active', liveMode);
+
+  const refOnlyEls = document.querySelectorAll('#expandAllBtn, #collapseAllBtn, #searchBox, #searchClear, #refControls');
+  refOnlyEls.forEach(el => { el.style.display = liveMode ? 'none' : ''; });
+
+  if (liveMode) {
+    document.getElementById('liveWarning').style.display = liveConnected ? 'none' : '';
+    liveNavStack = [];
+    liveLastDetailPath = null;
+    liveLastDetailLabel = null;
+    liveValueCells.clear();
+    buildLiveTree(liveData);
+    showLiveDetail('', 'objectModel');
+  } else {
+    document.getElementById('liveWarning').style.display = 'none';
+    buildTree();
+    if (lastDetailKey) {
+      const detail = document.getElementById('detailPanel');
+      if (lastDetailType === 'class' && model.classes[lastDetailKey]) {
+        detail.innerHTML = renderClassDetail(model.classes[lastDetailKey]);
+      } else if (lastDetailType === 'enum' && model.enums[lastDetailKey]) {
+        detail.innerHTML = renderEnumDetail(model.enums[lastDetailKey]);
+      }
+      wireDetailLinks(detail);
+    }
+  }
+}
+
+document.getElementById('modeRef').addEventListener('click', () => { if (liveMode) switchMode('reference'); });
+document.getElementById('modeLive').addEventListener('click', () => { if (!liveMode && liveData) switchMode('live'); });
+document.getElementById('connectBtn').addEventListener('click', liveConnect);
+
+// ────────────────────────────────────────────────────────────
+// Live mode — value helpers
+// ────────────────────────────────────────────────────────────
+function getValueAtPath(obj, path) {
+  if (path === '' || path == null) return obj;
+  let cur = obj;
+  for (const p of path.split('.')) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
+
+function formatLiveValue(val) {
+  if (val === undefined) return '—';
+  if (val === null) return 'null';
+  if (typeof val === 'boolean') return String(val);
+  if (typeof val === 'number') return String(val);
+  if (typeof val === 'string') return '"' + val + '"';
+  if (Array.isArray(val)) return '[' + val.length + ']';
+  return '{…}';
+}
+
+function liveValueClass(val) {
+  if (val === null || val === undefined) return 'is-null';
+  if (val === true) return 'is-bool-true';
+  if (val === false) return 'is-bool-false';
+  return '';
+}
+
+// ────────────────────────────────────────────────────────────
+// Live mode — in-place update
+// ────────────────────────────────────────────────────────────
+function updateLiveTreeValues(data) {
+  document.querySelectorAll('#treeScroll [data-lv]').forEach(el => {
+    const path = el.dataset.lv;
+    const val = getValueAtPath(data, path);
+    const text = formatLiveValue(val);
+    if (el.textContent !== text) {
+      el.textContent = text;
+      el.className = 'live-value ' + liveValueClass(val);
+      el.classList.add('live-updated');
+      el.addEventListener('animationend', () => el.classList.remove('live-updated'), { once: true });
+    }
+  });
+}
+
+function updateLiveDetailValues(data) {
+  liveValueCells.forEach((td, path) => {
+    const val = getValueAtPath(data, path);
+    const text = formatLiveValue(val);
+    if (td.textContent !== text) {
+      td.textContent = text;
+      td.className = 'val-col ' + liveValueClass(val);
+    }
+  });
+}
+
+// ────────────────────────────────────────────────────────────
+// Live mode — tree
+// ────────────────────────────────────────────────────────────
+function resolveLiveClass(path) {
+  if (!path) return model.classes['ObjectModel'] || null;
+  let cls = model.classes['ObjectModel'];
+  for (const seg of path.split('.')) {
+    if (!cls) return null;
+    if (/^\d+$/.test(seg)) continue; // array index — element type already resolved
+    const prop = (cls.props || []).find(p => p.name === seg);
+    if (!prop) return null;
+    const inner = resolveCollectionType(prop.type) || prop.type.replace(/\s*\|\s*null/g, '').trim();
+    cls = model.classes[inner] || null;
+  }
+  return cls;
+}
+
+function buildLiveTree(data) {
+  const scroll = document.getElementById('treeScroll');
+  scroll.innerHTML = '';
+  if (!data) {
+    scroll.innerHTML = '<div class="placeholder">No live data</div>';
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  const rootNode = buildLiveNode(data, '', 'objectModel', 0);
+  if (rootNode) frag.appendChild(rootNode);
+  scroll.appendChild(frag);
+
+  // Auto-expand root
+  const rootChildren = rootNode?.querySelector('.tree-children');
+  const rootToggle = rootNode?.querySelector('.tree-toggle');
+  if (rootChildren && rootToggle) {
+    rootChildren.classList.remove('collapsed');
+    rootToggle.textContent = '▼';
+    rootChildren.dataset.populated = '1';
+    populateLiveChildren(data, '', 0, rootChildren);
+  }
+}
+
+function buildLiveNode(val, path, label, depth) {
+  const isObj = val !== null && typeof val === 'object' && !Array.isArray(val);
+  const isArr = Array.isArray(val);
+  if (!isObj && !isArr) return null; // primitives handled inline by parent
+
+  const node = document.createElement('div');
+  node.className = 'tree-node';
+  node.dataset.livePath = path;
+
+  const cls = resolveLiveClass(path);
+  const clsDesc = cls ? getClassDesc(cls.name) : null;
+
+  let badge = '', badgeCls = 'badge-class';
+  if (isArr) { badge = '[' + val.length + ']'; badgeCls = 'badge-collection'; }
+  else if (cls && cls.name !== label) { badge = cls.name; badgeCls = 'badge-class'; }
+
+  const { row, toggle } = makeTreeRow(depth, '▶', label, badge, badgeCls, clsDesc?.summary || null);
+  node.appendChild(row);
+  row.addEventListener('click', () => {
+    if (liveMode) showLiveDetail(path, label);
+  });
+
+  const children = document.createElement('div');
+  children.className = 'tree-children collapsed';
+  node.appendChild(children);
+
+  toggle.addEventListener('click', e => {
+    e.stopPropagation();
+    const collapsed = children.classList.toggle('collapsed');
+    toggle.textContent = collapsed ? '▶' : '▼';
+    if (!collapsed && !children.dataset.populated) {
+      children.dataset.populated = '1';
+      populateLiveChildren(val, path, depth, children);
+    }
+  });
+
+  return node;
+}
+
+function populateLiveChildren(val, path, depth, container) {
+  const entries = Array.isArray(val)
+    ? val.map((v, i) => ({ key: String(i), label: '[' + i + ']', value: v }))
+    : Object.entries(val).map(([k, v]) => ({ key: k, label: k, value: v }));
+
+  for (const { key, label, value } of entries) {
+    const childPath = path ? path + '.' + key : key;
+    const isObj = value !== null && typeof value === 'object';
+
+    if (isObj) {
+      const childNode = buildLiveNode(value, childPath, label, depth + 1);
+      if (childNode) container.appendChild(childNode);
+    } else {
+      // Leaf row
+      const node = document.createElement('div');
+      node.className = 'tree-node';
+      const row = document.createElement('div');
+      row.className = 'tree-row';
+
+      const indent = document.createElement('span');
+      indent.className = 'tree-indent';
+      indent.style.width = ((depth + 1) * 16) + 'px';
+      const spacer = document.createElement('span');
+      spacer.className = 'tree-toggle';
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'tree-name';
+      nameSpan.textContent = label;
+
+      const valSpan = document.createElement('span');
+      valSpan.className = 'live-value dim ' + liveValueClass(value);
+      valSpan.textContent = formatLiveValue(value);
+      valSpan.dataset.lv = childPath;
+
+      row.appendChild(indent);
+      row.appendChild(spacer);
+      row.appendChild(nameSpan);
+      row.appendChild(valSpan);
+      node.appendChild(row);
+
+      // Clicking a leaf selects its parent class in the detail panel
+      const parentPath = path;
+      row.addEventListener('click', () => { if (liveMode) showLiveDetail(parentPath, parentPath.split('.').pop() || 'objectModel'); });
+      container.appendChild(node);
+    }
+  }
+
+  if (container.children.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'padding:4px 8px;font-size:12px;color:var(--text-dim)';
+    empty.textContent = '(empty)';
+    container.appendChild(empty);
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// Live mode — detail panel
+// ────────────────────────────────────────────────────────────
+function renderLiveBreadcrumb() {
+  if (!liveNavStack.length) return '';
+  const parts = liveNavStack.map((entry, i) =>
+    `<span class="bc-item" data-live-bc="${i}">${escHtml(entry.label)}</span>`
+  );
+  return `<div class="detail-breadcrumb">${parts.join('<span class="bc-sep">›</span>')}` +
+    `<span class="bc-sep">›</span><span class="bc-current">${escHtml(liveLastDetailLabel || '')}</span></div>`;
+}
+
+function showLiveDetail(path, label) {
+  liveLastDetailPath = path;
+  liveLastDetailLabel = label;
+  liveValueCells.clear();
+
+  const detail = document.getElementById('detailPanel');
+  const val = getValueAtPath(liveData, path);
+  const cls = resolveLiveClass(path);
+
+  if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
+    detail.innerHTML = renderLiveObjectDetail(val, path, cls);
+  } else if (Array.isArray(val)) {
+    detail.innerHTML = renderLiveArrayDetail(val, path, cls, label);
+  } else {
+    detail.innerHTML = `<div class="placeholder" style="margin-top:40px">Select an object in the tree to view details.</div>`;
+    return;
+  }
+
+  // Wire value cells
+  detail.querySelectorAll('[data-lvc]').forEach(td => {
+    liveValueCells.set(td.dataset.lvc, td);
+  });
+
+  // Wire drilldown rows
+  detail.querySelectorAll('tr.prop-row-drilldown[data-live-path]').forEach(row => {
+    row.addEventListener('click', () => {
+      const p = row.dataset.livePath;
+      const l = row.dataset.liveLabel;
+      liveNavStack.push({ path: liveLastDetailPath, label: liveLastDetailLabel });
+      showLiveDetail(p, l);
+    });
+  });
+
+  // Wire breadcrumb
+  detail.querySelectorAll('[data-live-bc]').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.liveBc);
+      const entry = liveNavStack[idx];
+      if (!entry) return;
+      liveNavStack = liveNavStack.slice(0, idx);
+      showLiveDetail(entry.path, entry.label);
+    });
+  });
+}
+
+function navigateLiveDetail(path, label) {
+  liveNavStack.push({ path: liveLastDetailPath, label: liveLastDetailLabel });
+  showLiveDetail(path, label);
+}
+
+function renderLiveObjectDetail(val, path, cls) {
+  const clsDesc = cls ? getClassDesc(cls.name) : null;
+  const hasAnyDesc = cls ? (cls.props || []).some(p => getPropDesc(cls.name, p.name)) : false;
+
+  let html = renderLiveBreadcrumb();
+  html += `<h2>${escHtml(liveLastDetailLabel || path || 'objectModel')}</h2>`;
+
+  // OM path chips
+  if (cls) {
+    const paths = findPaths(cls.name);
+    if (paths.length) {
+      html += `<div class="om-path">` + paths.map(p => `<code class="om-path-code">${escHtml(p)}</code>`).join('') + `</div>`;
+    }
+  }
+
+  if (clsDesc?.summary) {
+    html += `<div class="class-description">${escHtml(clsDesc.summary)}`;
+    if (clsDesc.remarks) html += `<div class="remarks">${escHtml(clsDesc.remarks)}</div>`;
+    html += `</div>`;
+  }
+
+  // Build rows from live data keys, annotating with model info where available
+  const keys = Object.keys(val);
+  if (!keys.length) {
+    html += `<div style="color:var(--text-dim);font-size:13px;margin-top:16px">No properties.</div>`;
+    return html;
+  }
+
+  html += `<table class="prop-table"><thead><tr>
+    <th>Property</th><th>Type</th><th>Value</th>
+    ${hasAnyDesc ? '<th>Description</th>' : ''}
+  </tr></thead><tbody>`;
+
+  for (const key of keys) {
+    const childVal = val[key];
+    const childPath = path ? path + '.' + key : key;
+    const prop = cls ? (cls.props || []).find(p => p.name === key) : null;
+    const desc = prop && cls ? getPropDesc(cls.name, key) : null;
+
+    // Type display
+    let typeHtml = '';
+    if (prop) {
+      const inner = resolveCollectionType(prop.type);
+      const isCol = isCollectionType(prop.type);
+      const isDct = isDictType(prop.type);
+      const isEnum = !!model.enums[prop.type];
+      const isCls = !!model.classes[prop.type];
+      if (isCol && inner && (model.classes[inner] || model.enums[inner])) {
+        typeHtml = `<span class="prop-type">${escHtml(inner)}[]</span>`;
+      } else if (isDct && inner && model.classes[inner]) {
+        typeHtml = `<span class="prop-type">${escHtml(inner)}{}</span>`;
+      } else if (isCls || isEnum) {
+        typeHtml = `<span class="prop-type">${escHtml(prop.type)}</span>`;
+      } else {
+        typeHtml = `<span class="prop-type">${escHtml(shortType(prop.type))}</span>`;
+      }
+      if (prop.nullable) typeHtml += ` <span style="color:var(--text-dim);font-size:11px">or null</span>`;
+
+      // SBC badge
+      if (desc?.sbcProperty === false) {
+        typeHtml += ` <span class="tag tag-sbc-only" title="SBC only">SBC only</span>`;
+      } else if (desc?.sbcProperty === true) {
+        typeHtml += ` <span class="tag tag-sbc-also" title="SBC managed">SBC</span>`;
+      }
+    }
+
+    // Is this an object/array that can be drilled into?
+    const childIsObj = childVal !== null && typeof childVal === 'object';
+    const childCls = childIsObj && !Array.isArray(childVal) ? resolveLiveClass(childPath) : null;
+    const isDrillable = childIsObj;
+    const rowAttr = isDrillable
+      ? ` class="prop-row-drilldown" data-live-path="${escHtml(childPath)}" data-live-label="${escHtml(key)}"`
+      : '';
+    const chevron = isDrillable ? `<span class="prop-drilldown-chevron">›</span>` : '';
+
+    // Enum inline chips (reference mode style)
+    let enumInline = '';
+    if (prop && model.enums[prop.type] && !childIsObj) {
+      const en = model.enums[prop.type];
+      enumInline = `<div class="enum-inline">` +
+        en.members.map(m => {
+          const md = getEnumMemberDesc(en.name, m.key);
+          const active = (childVal === m.value || childVal === m.key) ? ' style="opacity:1;border-color:var(--green)"' : ' style="opacity:0.4"';
+          const tip = md?.summary ? ` title="${escHtml(md.summary)}"` : '';
+          return `<span class="enum-pip"${active}${tip}>${escHtml(m.key)}</span>`;
+        }).join('') + `</div>`;
+    }
+
+    // Value cell
+    const valText = formatLiveValue(childVal);
+    const valCls = 'val-col ' + liveValueClass(childVal);
+
+    // Description
+    let descHtml = '';
+    if (hasAnyDesc) {
+      descHtml = desc?.summary ? escHtml(desc.summary) : `<span style="color:var(--text-dim)">—</span>`;
+      if (desc?.remarks) descHtml += `<div class="remarks">${escHtml(desc.remarks)}</div>`;
+    }
+
+    html += `<tr${rowAttr}>
+      <td><span class="prop-name">${escHtml(key)}</span>${chevron}</td>
+      <td>${typeHtml}${enumInline}</td>
+      <td class="${escHtml(valCls)}" data-lvc="${escHtml(childPath)}">${escHtml(valText)}</td>
+      ${hasAnyDesc ? `<td class="prop-desc-cell">${descHtml}</td>` : ''}
+    </tr>`;
+  }
+
+  return html + '</tbody></table>';
+}
+
+function renderLiveArrayDetail(arr, path, cls, label) {
+  let html = renderLiveBreadcrumb();
+  html += `<h2>${escHtml(label)}</h2>`;
+  html += `<div style="color:var(--text-dim);font-size:13px;margin-bottom:12px">${arr.length} item${arr.length !== 1 ? 's' : ''}</div>`;
+
+  if (!arr.length) return html + `<div style="color:var(--text-dim);font-size:13px">Empty array.</div>`;
+
+  html += `<table class="prop-table"><thead><tr><th>Index</th><th>Value / Object</th></tr></thead><tbody>`;
+  arr.forEach((item, i) => {
+    const childPath = path + '.' + i;
+    const childIsObj = item !== null && typeof item === 'object';
+    const rowAttr = childIsObj
+      ? ` class="prop-row-drilldown" data-live-path="${escHtml(childPath)}" data-live-label="${escHtml('[' + i + ']')}"`
+      : '';
+    const chevron = childIsObj ? `<span class="prop-drilldown-chevron">›</span>` : '';
+    const valText = childIsObj ? (Array.isArray(item) ? '[' + item.length + ']' : '{…}') : formatLiveValue(item);
+    const valCls = childIsObj ? '' : 'val-col ' + liveValueClass(item);
+    html += `<tr${rowAttr}>
+      <td style="font-family:monospace;color:var(--text-dim)">[${i}]</td>
+      <td${childIsObj ? '' : ` class="${escHtml(valCls)}" data-lvc="${escHtml(childPath)}"`}>${escHtml(valText)}${chevron}</td>
+    </tr>`;
+  });
+
+  return html + '</tbody></table>';
+}
 
 // ────────────────────────────────────────────────────────────
 // Init
