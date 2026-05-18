@@ -470,12 +470,11 @@ const DSF_OM_PATH = 'src/DuetAPI/ObjectModel';
 // State
 // ────────────────────────────────────────────────────────────
 let model = { classes: {}, enums: {} };
-// descriptions[ClassName][propName] = { summary, remarks }
-// descriptions[ClassName].__class__ = { summary, remarks }
-// descriptions[EnumName][memberName] = { summary }
 let descriptions = {};
 let selectedNode = null;
 let searchTerm = '';
+let lastDetailType = null;  // 'class' | 'enum'
+let lastDetailKey = null;   // class or enum name currently shown in detail panel
 
 // ────────────────────────────────────────────────────────────
 // Utilities
@@ -903,6 +902,8 @@ function isDictType(t) {
 async function loadModel(ref) {
   model = { classes: {}, enums: {} };
   descriptions = {};
+  lastDetailType = null;
+  lastDetailKey = null;
 
   // ── Load TypeScript ObjectModel ──
   loading(true, 'Fetching OM file list...');
@@ -1012,8 +1013,29 @@ function buildTree() {
   const scroll = document.getElementById('treeScroll');
   scroll.innerHTML = '';
   const frag = document.createDocumentFragment();
-  frag.appendChild(buildClassNode(root, 0, 'objectModel'));
+  const rootNode = buildClassNode(root, 0, 'objectModel');
+  frag.appendChild(rootNode);
   scroll.appendChild(frag);
+
+  // Auto-expand the root node so the top-level properties are visible
+  const rootToggle = rootNode.querySelector('.tree-toggle');
+  const rootChildren = rootNode.querySelector('.tree-children');
+  if (rootToggle && rootChildren) {
+    rootChildren.classList.remove('collapsed');
+    rootToggle.textContent = '▼';
+    populateClassChildren(root, 0, rootChildren);
+  }
+
+  // Restore the detail panel if something was previously selected
+  if (lastDetailKey) {
+    const detail = document.getElementById('detailPanel');
+    if (lastDetailType === 'class' && model.classes[lastDetailKey]) {
+      detail.innerHTML = renderClassDetail(model.classes[lastDetailKey]);
+      wireDetailLinks(detail);
+    } else if (lastDetailType === 'enum' && model.enums[lastDetailKey]) {
+      detail.innerHTML = renderEnumDetail(model.enums[lastDetailKey]);
+    }
+  }
 
   updateControls(true);
   status(
@@ -1223,52 +1245,58 @@ function selectNode(rowEl, type, key) {
 
   if (type === 'class') {
     const cls = model.classes[key];
-    if (cls) detail.innerHTML = renderClassDetail(cls);
+    if (cls) { detail.innerHTML = renderClassDetail(cls); lastDetailType = 'class'; lastDetailKey = key; }
   } else if (type === 'enum') {
     const en = model.enums[key];
-    if (en) detail.innerHTML = renderEnumDetail(en);
+    if (en) { detail.innerHTML = renderEnumDetail(en); lastDetailType = 'enum'; lastDetailKey = key; }
   } else if (type === 'prop') {
     const [clsName] = key.split('.');
     const cls = model.classes[clsName];
-    if (cls) detail.innerHTML = renderClassDetail(cls);
+    if (cls) { detail.innerHTML = renderClassDetail(cls); lastDetailType = 'class'; lastDetailKey = clsName; }
   }
 
   wireDetailLinks(detail);
 }
 
-// Build a map of className -> all subclass names (direct and transitive)
+// Build a map: className -> Set of all transitive subclass names
 function buildSubclassMap() {
-  const map = {}; // parentName -> Set of subclass names
+  const direct = {}; // className -> Set of direct subclasses
   for (const cls of Object.values(model.classes)) {
     if (cls.parent) {
-      if (!map[cls.parent]) map[cls.parent] = new Set();
-      map[cls.parent].add(cls.name);
+      if (!direct[cls.parent]) direct[cls.parent] = new Set();
+      direct[cls.parent].add(cls.name);
     }
   }
-  // Expand transitively
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const [parent, children] of Object.entries(map)) {
-      for (const child of [...children]) {
-        if (map[child]) {
-          for (const grandchild of map[child]) {
-            if (!children.has(grandchild)) {
-              children.add(grandchild);
-              changed = true;
-            }
-          }
-        }
-      }
+  // Transitively expand
+  const map = {};
+  function getAll(name) {
+    if (map[name]) return map[name];
+    map[name] = new Set();
+    for (const child of direct[name] || []) {
+      map[name].add(child);
+      for (const grand of getAll(child)) map[name].add(grand);
     }
+    return map[name];
   }
+  for (const name of Object.keys(direct)) getAll(name);
   return map;
 }
 
+// Return all ancestor class names of cls (including itself)
+function getAncestors(cls) {
+  const result = new Set();
+  let c = cls;
+  while (c) {
+    result.add(c.name);
+    c = c.parent ? model.classes[c.parent] : null;
+  }
+  return result;
+}
+
 // Walk the ObjectModel tree to find all dotted paths that lead to targetClass.
-// Follows inheritance: if a property holds FilamentMonitorBase and LaserFilamentMonitor
-// extends it, LaserFilamentMonitor's own properties are reachable from that path too.
-// Returns path strings like ["move.extruders[]", "sensors.filamentMonitors[].configured"]
+// Handles polymorphic collections: sensors.filamentMonitors[] holds FilamentMonitor
+// (extends FilamentMonitorBase), and LaserFilamentMonitor also extends FilamentMonitorBase,
+// so LaserFilamentMonitor's properties are reachable from that path.
 function findPaths(targetClassName) {
   const root = model.classes['ObjectModel'];
   if (!root) return [];
@@ -1277,18 +1305,39 @@ function findPaths(targetClassName) {
   const results = new Set();
   const visited = new Set();
 
-  // Returns true if clsName === targetClassName or targetClassName is a subclass of clsName
-  function typeCoversTarget(clsName) {
+  const targetCls = model.classes[targetClassName];
+  if (!targetCls) return [];
+
+  // All names that are the target or have the target as a subclass
+  // (walking into them may surface the target via polymorphism)
+  const targetAncestors = getAncestors(targetCls); // e.g. [LaserFilamentMonitor, Duet3DFilamentMonitor, FilamentMonitorBase]
+
+  function couldReachTarget(clsName) {
+    // Direct match
     if (clsName === targetClassName) return true;
-    return subclassMap[clsName]?.has(targetClassName) || false;
+    // targetClassName is a subclass of clsName
+    if (subclassMap[clsName]?.has(targetClassName)) return true;
+    // clsName is an ancestor of targetClassName (shared base)
+    // — means we can walk into subclasses of clsName and find targetClassName
+    if (targetAncestors.has(clsName)) return true;
+    return false;
   }
 
-  // All class names that are the target or a superclass of the target
-  // (i.e. walking into them might eventually reach targetClassName's own props)
-  function couldContainTarget(clsName) {
-    if (clsName === targetClassName) return true;
-    // Is targetClassName a subclass of clsName?
-    return subclassMap[clsName]?.has(targetClassName) || false;
+  // All classes that are "compatible" with a given type at a path:
+  // the type itself + all its subclasses + all classes sharing a common ancestor
+  // For simplicity: walk the type itself AND any class whose ancestor set
+  // intersects with targetAncestors
+  function compatibleClasses(clsName) {
+    const result = new Set();
+    result.add(clsName);
+    // All subclasses of clsName
+    for (const s of subclassMap[clsName] || []) result.add(s);
+    // Any class that shares an ancestor with target (sibling branches)
+    for (const anc of targetAncestors) {
+      for (const s of subclassMap[anc] || []) result.add(s);
+      result.add(anc);
+    }
+    return result;
   }
 
   function walk(cls, pathSoFar) {
@@ -1296,7 +1345,6 @@ function findPaths(targetClassName) {
     if (visited.has(key)) return;
     visited.add(key);
 
-    // If this class IS the target (arrived here via a parent type), record the path
     if (cls.name === targetClassName && pathSoFar) {
       results.add(pathSoFar);
     }
@@ -1312,23 +1360,13 @@ function findPaths(targetClassName) {
 
       if (resolvedType === targetClassName) {
         results.add(segment);
-        // Still recurse in case target has subprops also being searched
       }
 
-      const childCls = model.classes[resolvedType];
-      if (childCls) {
-        // Walk the child class itself
-        if (couldContainTarget(resolvedType)) {
-          walk(childCls, segment);
-        }
-        // Also walk all subclasses of this type — polymorphic collections
-        if (subclassMap[resolvedType]) {
-          for (const subName of subclassMap[resolvedType]) {
-            const subCls = model.classes[subName];
-            if (subCls && couldContainTarget(subName)) {
-              walk(subCls, segment);
-            }
-          }
+      if (model.classes[resolvedType] && couldReachTarget(resolvedType)) {
+        // Walk the resolved type and all compatible siblings/subclasses
+        for (const cname of compatibleClasses(resolvedType)) {
+          const c = model.classes[cname];
+          if (c) walk(c, segment);
         }
       }
     }
@@ -1342,11 +1380,14 @@ function wireDetailLinks(detail) {
   detail.querySelectorAll('[data-goto]').forEach(el => {
     el.addEventListener('click', () => {
       const target = el.dataset.goto;
+      const dp = document.getElementById('detailPanel');
       if (model.classes[target]) {
-        document.getElementById('detailPanel').innerHTML = renderClassDetail(model.classes[target]);
-        wireDetailLinks(document.getElementById('detailPanel'));
+        dp.innerHTML = renderClassDetail(model.classes[target]);
+        lastDetailType = 'class'; lastDetailKey = target;
+        wireDetailLinks(dp);
       } else if (model.enums[target]) {
-        document.getElementById('detailPanel').innerHTML = renderEnumDetail(model.enums[target]);
+        dp.innerHTML = renderEnumDetail(model.enums[target]);
+        lastDetailType = 'enum'; lastDetailKey = target;
       }
     });
   });
