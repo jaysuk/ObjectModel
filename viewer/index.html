@@ -374,6 +374,35 @@
   }
   .enum-pip[title] { cursor: help; }
 
+  /* breadcrumb nav */
+  .detail-breadcrumb {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 2px;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+  .detail-breadcrumb .bc-item {
+    cursor: pointer;
+    color: var(--accent);
+    text-decoration: underline dotted;
+  }
+  .detail-breadcrumb .bc-item:hover { color: var(--pink); }
+  .detail-breadcrumb .bc-sep { color: var(--border); margin: 0 2px; }
+  .detail-breadcrumb .bc-current { color: var(--text-dim); cursor: default; text-decoration: none; }
+
+  /* clickable row in prop table */
+  tr.prop-row-drilldown { cursor: pointer; }
+  tr.prop-row-drilldown:hover td { background: rgba(137,180,250,0.07); }
+  .prop-drilldown-chevron {
+    color: var(--accent);
+    font-size: 13px;
+    margin-left: 6px;
+    opacity: 0.7;
+  }
+
   .placeholder {
     color: var(--text-dim);
     font-size: 14px;
@@ -478,6 +507,7 @@ let selectedNode = null;
 let searchTerm = '';
 let lastDetailType = null;  // 'class' | 'enum'
 let lastDetailKey = null;   // class or enum name currently shown in detail panel
+let navStack = [];           // [{type, key}] — breadcrumb history
 
 // ────────────────────────────────────────────────────────────
 // Utilities
@@ -956,6 +986,7 @@ async function loadModel(ref) {
   descriptions = {};
   lastDetailType = null;
   lastDetailKey = null;
+  navStack = [];
 
   // ── Resolve SHAs for cache key ──
   loading(true, 'Checking for updates…');
@@ -1343,20 +1374,52 @@ function selectNode(rowEl, type, key) {
   rowEl.classList.add('selected');
   selectedNode = rowEl;
 
-  const detail = document.getElementById('detailPanel');
+  // Tree selections always reset the breadcrumb stack
+  navStack = [];
 
-  if (type === 'class') {
-    const cls = model.classes[key];
-    if (cls) { detail.innerHTML = renderClassDetail(cls); lastDetailType = 'class'; lastDetailKey = key; }
-  } else if (type === 'enum') {
-    const en = model.enums[key];
-    if (en) { detail.innerHTML = renderEnumDetail(en); lastDetailType = 'enum'; lastDetailKey = key; }
+  const detail = document.getElementById('detailPanel');
+  if (type === 'class' && model.classes[key]) {
+    lastDetailType = 'class'; lastDetailKey = key;
+    detail.innerHTML = renderClassDetail(model.classes[key]);
+  } else if (type === 'enum' && model.enums[key]) {
+    lastDetailType = 'enum'; lastDetailKey = key;
+    detail.innerHTML = renderEnumDetail(model.enums[key]);
   } else if (type === 'prop') {
     const [clsName] = key.split('.');
     const cls = model.classes[clsName];
-    if (cls) { detail.innerHTML = renderClassDetail(cls); lastDetailType = 'class'; lastDetailKey = clsName; }
+    if (cls) { lastDetailType = 'class'; lastDetailKey = clsName; detail.innerHTML = renderClassDetail(cls); }
   }
 
+  wireDetailLinks(detail);
+}
+
+// Navigate the detail panel to a new class/enum, pushing the current view onto the breadcrumb stack.
+function navigateDetail(targetType, targetKey) {
+  if (lastDetailKey) navStack.push({ type: lastDetailType, key: lastDetailKey });
+  lastDetailType = targetType;
+  lastDetailKey = targetKey;
+  const detail = document.getElementById('detailPanel');
+  if (targetType === 'class' && model.classes[targetKey]) {
+    detail.innerHTML = renderClassDetail(model.classes[targetKey]);
+  } else if (targetType === 'enum' && model.enums[targetKey]) {
+    detail.innerHTML = renderEnumDetail(model.enums[targetKey]);
+  }
+  wireDetailLinks(detail);
+}
+
+// Navigate back to a specific point in the breadcrumb stack (idx = stack index to jump to).
+function navigateBreadcrumb(idx) {
+  const entry = navStack[idx];
+  if (!entry) return;
+  navStack = navStack.slice(0, idx);
+  lastDetailType = entry.type;
+  lastDetailKey = entry.key;
+  const detail = document.getElementById('detailPanel');
+  if (entry.type === 'class' && model.classes[entry.key]) {
+    detail.innerHTML = renderClassDetail(model.classes[entry.key]);
+  } else if (entry.type === 'enum' && model.enums[entry.key]) {
+    detail.innerHTML = renderEnumDetail(model.enums[entry.key]);
+  }
   wireDetailLinks(detail);
 }
 
@@ -1543,19 +1606,32 @@ function findPaths(targetClassName) {
 
 function wireDetailLinks(detail) {
   detail.querySelectorAll('[data-goto]').forEach(el => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
       const target = el.dataset.goto;
-      const dp = document.getElementById('detailPanel');
-      if (model.classes[target]) {
-        dp.innerHTML = renderClassDetail(model.classes[target]);
-        lastDetailType = 'class'; lastDetailKey = target;
-        wireDetailLinks(dp);
-      } else if (model.enums[target]) {
-        dp.innerHTML = renderEnumDetail(model.enums[target]);
-        lastDetailType = 'enum'; lastDetailKey = target;
-      }
+      if (model.classes[target]) navigateDetail('class', target);
+      else if (model.enums[target]) navigateDetail('enum', target);
     });
   });
+  detail.querySelectorAll('[data-bc]').forEach(el => {
+    el.addEventListener('click', () => navigateBreadcrumb(parseInt(el.dataset.bc)));
+  });
+  detail.querySelectorAll('tr.prop-row-drilldown').forEach(row => {
+    row.addEventListener('click', () => {
+      const target = row.dataset.goto;
+      if (model.classes[target]) navigateDetail('class', target);
+      else if (model.enums[target]) navigateDetail('enum', target);
+    });
+  });
+}
+
+function renderBreadcrumb() {
+  if (!navStack.length) return '';
+  const parts = navStack.map((entry, i) =>
+    `<span class="bc-item" data-bc="${i}">${escHtml(entry.key)}</span>`
+  );
+  return `<div class="detail-breadcrumb">${parts.join('<span class="bc-sep">›</span>')}` +
+    `<span class="bc-sep">›</span><span class="bc-current">${escHtml(lastDetailKey || '')}</span></div>`;
 }
 
 function renderClassDetail(cls) {
@@ -1563,7 +1639,8 @@ function renderClassDetail(cls) {
   const clsDesc = getClassDesc(cls.name);
   const hasAnyDesc = allProps.some(p => getPropDesc(cls.name, p.name));
 
-  let html = `<h2>${escHtml(cls.name)}</h2>`;
+  let html = renderBreadcrumb();
+  html += `<h2>${escHtml(cls.name)}</h2>`;
 
   // Object model path breadcrumb
   const paths = findPaths(cls.name);
@@ -1640,8 +1717,16 @@ function renderClassDetail(cls) {
         `</div>`;
     }
 
-    html += `<tr>
-      <td><span class="prop-name">${escHtml(p.name)}</span></td>
+    // Determine if this row drills into a class (not just an enum)
+    const drillTarget = (isCol && inner && model.classes[inner]) ? inner
+      : (isDct && inner && model.classes[inner]) ? inner
+      : (isCls) ? p.type
+      : null;
+    const rowClass = drillTarget ? ` class="prop-row-drilldown" data-goto="${escHtml(drillTarget)}"` : '';
+    const chevron = drillTarget ? `<span class="prop-drilldown-chevron">›</span>` : '';
+
+    html += `<tr${rowClass}>
+      <td><span class="prop-name">${escHtml(p.name)}</span>${chevron}</td>
       <td>${typeHtml}${enumInline}</td>
       <td><span class="prop-default">${escHtml(p.default || '')}</span></td>
       ${hasAnyDesc ? `<td class="prop-desc-cell">${descHtml}</td>` : ''}
@@ -1655,7 +1740,8 @@ function renderEnumDetail(en) {
   const enDesc = getClassDesc(en.name);
   const hasMemberDescs = en.members.some(m => getEnumMemberDesc(en.name, m.key));
 
-  let html = `<h2>${escHtml(en.name)}</h2>`;
+  let html = renderBreadcrumb();
+  html += `<h2>${escHtml(en.name)}</h2>`;
 
   if (enDesc?.summary) {
     html += `<div class="class-description">${escHtml(enDesc.summary)}</div>`;
