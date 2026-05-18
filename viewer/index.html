@@ -2115,24 +2115,36 @@ async function liveConnect() {
 
   // Try standalone RRF: connect first (establishes session), then fetch model
   let connected = false;
+  let lastError = '';
   try {
+    console.log('[live] trying RRF standalone:', liveHost + '/rr_connect?password=reprap');
     const connRes = await fetchLiveJSON(liveHost + '/rr_connect?password=reprap');
+    console.log('[live] rr_connect response:', JSON.stringify(connRes));
     if (typeof connRes.err === 'number') {
-      // Session established — now fetch the full model
       const modelRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
+      console.log('[live] rr_model keys:', Object.keys(modelRes || {}));
       if (modelRes?.result) {
         liveEndpoint = 'rr_model';
         liveData = modelRes.result;
         connected = true;
+      } else {
+        lastError = 'rr_model returned no result key. Got: ' + JSON.stringify(modelRes).slice(0, 200);
       }
+    } else {
+      lastError = 'rr_connect err field unexpected: ' + JSON.stringify(connRes);
     }
-  } catch (_) {}
+  } catch (e) {
+    lastError = 'RRF standalone: ' + e.message;
+    console.warn('[live] RRF standalone failed:', e);
+  }
 
   // Try DSF/SBC — requires /machine/connect to get session key first
   if (!connected) {
     try {
+      console.log('[live] trying DSF/SBC:', liveHost + '/machine/connect');
       dsfSessionKey = null;
       const connRes = await fetchLiveJSON(liveHost + '/machine/connect?password=reprap');
+      console.log('[live] machine/connect response:', JSON.stringify(connRes));
       if (connRes?.sessionKey) {
         dsfSessionKey = connRes.sessionKey;
         const data = await fetchLiveJSON(liveHost + '/machine/status');
@@ -2142,14 +2154,18 @@ async function liveConnect() {
           connected = true;
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      lastError += ' | DSF: ' + e.message;
+      console.warn('[live] DSF failed:', e);
+    }
   }
 
   if (!connected) {
     btn.disabled = false;
     btn.textContent = 'Connect';
     showError('Could not connect to printer at ' + liveHost +
-      '\n\nCheck the address and ensure the printer is reachable from this browser.');
+      '\n\nError: ' + lastError +
+      '\n\nOpen the browser console (F12) for more detail.');
     return;
   }
 
