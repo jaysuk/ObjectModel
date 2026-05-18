@@ -1322,13 +1322,22 @@ function findPaths(targetClassName) {
       const suffix = isCol ? '[]' : isDct ? '{}' : '';
       const segment = pathSoFar ? pathSoFar + '.' + prop.name + suffix : prop.name + suffix;
 
-      // Walk the declared type itself
-      walk(model.classes[resolvedType], segment);
+      // Collect all classes reachable from this type:
+      // the type itself + all subclasses of the type + all subclasses of
+      // every ancestor of the type (handles sibling polymorphism, e.g.
+      // FilamentMonitor and LaserFilamentMonitor both extend FilamentMonitorBase)
+      const toWalk = new Set([resolvedType]);
+      for (const sub of subclassMap[resolvedType] || []) toWalk.add(sub);
+      // Walk ancestor chain and add their subclasses
+      let ancestor = model.classes[resolvedType];
+      while (ancestor) {
+        for (const sub of subclassMap[ancestor.name] || []) toWalk.add(sub);
+        ancestor = ancestor.parent ? model.classes[ancestor.parent] : null;
+      }
 
-      // Walk every transitive subclass of the declared type (polymorphism)
-      for (const subName of subclassMap[resolvedType] || []) {
-        const subCls = model.classes[subName];
-        if (subCls) walk(subCls, segment);
+      for (const name of toWalk) {
+        const c = model.classes[name];
+        if (c) walk(c, segment);
       }
     }
   }
@@ -1362,12 +1371,6 @@ function renderClassDetail(cls) {
   let html = `<h2>${escHtml(cls.name)}</h2>`;
 
   // Object model path breadcrumb
-  const _lm = model.classes['LaserFilamentMonitor'];
-  console.log('LaserFilamentMonitor:', _lm ? {parent:_lm.parent, props:_lm.props.map(p=>p.name)} : 'NOT FOUND');
-  const _sm = buildSubclassMap();
-  console.log('FilamentMonitor subs:', [...(_sm['FilamentMonitor']||[])]);
-  console.log('FilamentMonitorBase subs:', [...(_sm['FilamentMonitorBase']||[])]);
-  console.log('findPaths result:', findPaths(cls.name));
   const paths = findPaths(cls.name);
   if (paths.length > 0) {
     html += `<div class="om-path">`;
