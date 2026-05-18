@@ -575,7 +575,7 @@
 // ────────────────────────────────────────────────────────────
 // Constants
 // ────────────────────────────────────────────────────────────
-const VIEWER_VERSION = '1.4.0';
+const VIEWER_VERSION = '1.4.1';
 const OM_REPO   = 'Duet3D/ObjectModel';
 const DSF_REPO  = 'Duet3D/DuetSoftwareFramework';
 const OM_RAW    = 'https://raw.githubusercontent.com/' + OM_REPO;
@@ -2119,13 +2119,13 @@ async function fetchLiveJSON(url, extraHeaders = {}) {
   }
 }
 
-// RRF's rr_model response is size-limited. When the JSON is too large it returns
-// a `next` key with the name of the next top-level key to request. We handle this
-// by first fetching the root (which gives us top-level keys + partial data), then
-// fetching each top-level section individually with key=<name> to get full depth.
+// RRF's rr_model response is size-limited. Fetch each top-level section
+// individually using key=<name> to ensure full depth on all of them.
+// We use flags=d99fn (deep, frequent, include nulls) — the 'v' (verbose)
+// flag is not supported on all firmware versions and returns 503.
 async function fetchFullRRModel() {
-  // Step 1: get root-level keys via a shallow fetch
-  const rootRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99vn');
+  // Step 1: get root-level key list via a shallow fetch
+  const rootRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
   if (!rootRes?.result) return null;
   let combined = rootRes.result;
   const topKeys = Object.keys(combined);
@@ -2134,7 +2134,7 @@ async function fetchFullRRModel() {
   // Step 2: fetch each top-level section individually to ensure full depth
   for (const key of topKeys) {
     try {
-      const res = await fetchLiveJSON(liveHost + '/rr_model?key=' + key + '&flags=d99vn');
+      const res = await fetchLiveJSON(liveHost + '/rr_model?key=' + key + '&flags=d99fn');
       if (res?.result !== undefined) {
         combined[key] = res.result;
       }
