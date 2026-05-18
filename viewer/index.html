@@ -1994,8 +1994,10 @@ function highlightText(text, term) {
 }
 
 function showError(msg) {
+  // Format lines starting with spaces as code blocks
+  const formatted = escHtml(msg).replace(/\n/g, '<br>').replace(/(&nbsp;|  )+(M586[^<]*)/g, '<code style="background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:3px;font-family:monospace">$2</code>');
   document.getElementById('detailPanel').innerHTML =
-    `<div class="error-box"><strong>Error</strong><br>${escHtml(msg).replace(/\n/g, '<br>')}</div>`;
+    `<div class="error-box"><strong>Error</strong><br>${formatted}</div>`;
 }
 
 function updateControls(enabled) {
@@ -2163,9 +2165,11 @@ async function liveConnect() {
   if (!connected) {
     btn.disabled = false;
     btn.textContent = 'Connect';
+    const isCors = lastError.includes('CORS') || lastError.includes('Failed to fetch') || lastError.includes('NetworkError');
     showError('Could not connect to printer at ' + liveHost +
-      '\n\nError: ' + lastError +
-      '\n\nOpen the browser console (F12) for more detail.');
+      (isCors
+        ? '\n\nThis is likely a CORS error. RRF blocks requests from external pages by default.\n\nFix: add the following to your printer\'s config.g and reboot:\n\n  M586 C"*"\n\nThis tells RRF to allow requests from any browser origin.'
+        : '\n\nError: ' + lastError + '\n\nIf you see a CORS error in the browser console (F12), add M586 C"*" to config.g and reboot the printer.'));
     return;
   }
 
