@@ -2145,6 +2145,7 @@ async function liveConnect() {
   const raw = document.getElementById('hostInput').value.trim();
   if (!raw) return;
   liveHost = raw.startsWith('http') ? raw.replace(/\/$/, '') : 'http://' + raw.replace(/\/$/, '');
+  localStorage.setItem('liveHost', raw);
 
   const btn = document.getElementById('connectBtn');
   btn.disabled = true;
@@ -2935,6 +2936,8 @@ document.addEventListener('click', e => {
 // ────────────────────────────────────────────────────────────
 (async () => {
   document.getElementById('viewerVersion').textContent = 'v' + VIEWER_VERSION;
+  const savedHost = localStorage.getItem('liveHost');
+  if (savedHost) document.getElementById('hostInput').value = savedHost;
   await loadBranches();
   const sel = document.getElementById('branchSelect');
   if (sel.value) {
