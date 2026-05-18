@@ -2123,7 +2123,8 @@ async function liveConnect() {
     const connRes = await fetchLiveJSON(liveHost + '/rr_connect?password=reprap');
     console.log('[live] rr_connect response:', JSON.stringify(connRes));
     if (typeof connRes.err === 'number') {
-      const modelRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
+      // d99vn = deep, verbose (includes infrequently-changing fields), include nulls
+      const modelRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99vn');
       console.log('[live] rr_model keys:', Object.keys(modelRes || {}));
       if (modelRes?.result) {
         liveEndpoint = 'rr_model';
@@ -2212,6 +2213,17 @@ function stopLivePoll() {
   if (livePollTimer !== null) { clearTimeout(livePollTimer); livePollTimer = null; }
 }
 
+// Deep-merge patch into base object in-place (RRF poll updates are partial patches)
+function deepMerge(base, patch) {
+  if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) return patch;
+  if (base === null || typeof base !== 'object' || Array.isArray(base)) return patch;
+  const out = Object.assign({}, base);
+  for (const key of Object.keys(patch)) {
+    out[key] = deepMerge(base[key], patch[key]);
+  }
+  return out;
+}
+
 async function livePoll() {
   try {
     let data;
@@ -2224,7 +2236,8 @@ async function livePoll() {
         await fetchLiveJSON(liveHost + '/rr_connect?password=reprap');
         json = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
       }
-      data = json.result;
+      // d99fn returns only changed fields — merge into the full model
+      data = deepMerge(liveData, json.result);
     } else {
       // DSF session can expire — reconnect transparently if needed
       try {
