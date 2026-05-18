@@ -1369,58 +1369,62 @@ function populateClassChildren(cls, depth, container) {
 // ────────────────────────────────────────────────────────────
 // Selection / detail panel
 // ────────────────────────────────────────────────────────────
+// Push a history entry and render the detail panel.
+// stack = navStack state at the moment of this navigation.
+function pushDetailState(type, key, stack) {
+  history.pushState({ type, key, stack }, '');
+  restoreDetailState({ type, key, stack });
+}
+
+// Restore the detail panel (and navStack) from a history state object,
+// without pushing another history entry.
+function restoreDetailState(state) {
+  navStack = state.stack || [];
+  lastDetailType = state.type;
+  lastDetailKey = state.key;
+  const detail = document.getElementById('detailPanel');
+  if (state.type === 'class' && model.classes[state.key]) {
+    detail.innerHTML = renderClassDetail(model.classes[state.key]);
+  } else if (state.type === 'enum' && model.enums[state.key]) {
+    detail.innerHTML = renderEnumDetail(model.enums[state.key]);
+  }
+  wireDetailLinks(detail);
+}
+
+// Browser back/forward
+window.addEventListener('popstate', e => {
+  if (!e.state || !model.classes['ObjectModel']) return;
+  restoreDetailState(e.state);
+});
+
 function selectNode(rowEl, type, key) {
   if (selectedNode) selectedNode.classList.remove('selected');
   rowEl.classList.add('selected');
   selectedNode = rowEl;
 
-  // Tree selections always reset the breadcrumb stack
-  navStack = [];
-
-  const detail = document.getElementById('detailPanel');
-  if (type === 'class' && model.classes[key]) {
-    lastDetailType = 'class'; lastDetailKey = key;
-    detail.innerHTML = renderClassDetail(model.classes[key]);
-  } else if (type === 'enum' && model.enums[key]) {
-    lastDetailType = 'enum'; lastDetailKey = key;
-    detail.innerHTML = renderEnumDetail(model.enums[key]);
-  } else if (type === 'prop') {
-    const [clsName] = key.split('.');
-    const cls = model.classes[clsName];
-    if (cls) { lastDetailType = 'class'; lastDetailKey = clsName; detail.innerHTML = renderClassDetail(cls); }
+  let resolvedType = type, resolvedKey = key;
+  if (type === 'prop') {
+    resolvedType = 'class';
+    resolvedKey = key.split('.')[0];
   }
+  if (resolvedType === 'class' && !model.classes[resolvedKey]) return;
+  if (resolvedType === 'enum' && !model.enums[resolvedKey]) return;
 
-  wireDetailLinks(detail);
+  // Tree selections start a fresh history entry with empty stack
+  pushDetailState(resolvedType, resolvedKey, []);
 }
 
-// Navigate the detail panel to a new class/enum, pushing the current view onto the breadcrumb stack.
+// Navigate the detail panel to a new class/enum, pushing current view onto breadcrumb stack.
 function navigateDetail(targetType, targetKey) {
-  if (lastDetailKey) navStack.push({ type: lastDetailType, key: lastDetailKey });
-  lastDetailType = targetType;
-  lastDetailKey = targetKey;
-  const detail = document.getElementById('detailPanel');
-  if (targetType === 'class' && model.classes[targetKey]) {
-    detail.innerHTML = renderClassDetail(model.classes[targetKey]);
-  } else if (targetType === 'enum' && model.enums[targetKey]) {
-    detail.innerHTML = renderEnumDetail(model.enums[targetKey]);
-  }
-  wireDetailLinks(detail);
+  const newStack = lastDetailKey ? [...navStack, { type: lastDetailType, key: lastDetailKey }] : [...navStack];
+  pushDetailState(targetType, targetKey, newStack);
 }
 
 // Navigate back to a specific point in the breadcrumb stack (idx = stack index to jump to).
 function navigateBreadcrumb(idx) {
   const entry = navStack[idx];
   if (!entry) return;
-  navStack = navStack.slice(0, idx);
-  lastDetailType = entry.type;
-  lastDetailKey = entry.key;
-  const detail = document.getElementById('detailPanel');
-  if (entry.type === 'class' && model.classes[entry.key]) {
-    detail.innerHTML = renderClassDetail(model.classes[entry.key]);
-  } else if (entry.type === 'enum' && model.enums[entry.key]) {
-    detail.innerHTML = renderEnumDetail(model.enums[entry.key]);
-  }
-  wireDetailLinks(detail);
+  pushDetailState(entry.type, entry.key, navStack.slice(0, idx));
 }
 
 // Build a map: className -> Set of all transitive subclass names
