@@ -470,6 +470,20 @@
   @keyframes live-flash { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
   .live-updated { animation: live-flash 0.5s ease; }
 
+  .scan-result-item {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(61,61,92,0.4);
+    font-size: 13px;
+  }
+  .scan-result-item:last-child { border-bottom: none; }
+  .scan-result-item:hover { background: var(--surface2); }
+  .scan-result-ip { font-family: monospace; color: var(--accent); font-size: 12px; }
+  .scan-result-board { color: var(--text); font-weight: 500; }
+  .scan-result-mode { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
+
   .prop-table th.val-col, .prop-table td.val-col {
     color: var(--yellow);
     font-family: monospace;
@@ -490,7 +504,14 @@
     <button class="btn" id="loadBtn" disabled>Load</button>
   </span>
   <div style="width:1px;height:24px;background:var(--border);flex-shrink:0"></div>
-  <input type="text" id="hostInput" placeholder="printer.local or IP" title="Printer hostname or IP address">
+  <div style="position:relative;display:flex;align-items:center;gap:6px">
+    <input type="text" id="hostInput" placeholder="printer.local or IP" title="Printer hostname or IP address">
+    <button class="btn-ghost" id="scanBtn" title="Scan local network for Duet printers">Scan</button>
+    <div id="scanDropdown" style="display:none;position:absolute;top:calc(100% + 6px);left:0;min-width:260px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);z-index:200;overflow:hidden">
+      <div id="scanStatus" style="padding:8px 12px;font-size:12px;color:var(--text-dim);border-bottom:1px solid var(--border)">Ready to scan</div>
+      <div id="scanResults"></div>
+    </div>
+  </div>
   <button class="btn" id="connectBtn">Connect</button>
   <div id="modeToggle">
     <button class="mode-btn mode-active" id="modeRef" disabled>Reference</button>
@@ -2604,6 +2625,149 @@ function renderLiveArrayDetail(arr, path, cls, label) {
 
   return html + '</tbody></table>';
 }
+
+// ────────────────────────────────────────────────────────────
+// Network scanner
+// ────────────────────────────────────────────────────────────
+
+// Probe a single IP. Tries /rr_connect (standalone) then /machine/noop (DSF).
+// Returns { ip, boardType, mode } or null if not a Duet.
+async function probeDuet(ip) {
+  const base = 'http://' + ip;
+  // Try standalone first — tiny response, includes boardType
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 1500);
+    const r = await fetch(base + '/rr_connect?password=reprap', { signal: ctrl.signal });
+    clearTimeout(tid);
+    if (r.ok) {
+      const j = await r.json();
+      // Valid RRF response has err field; boardType present on newer firmware
+      if (typeof j.err === 'number') {
+        return { ip, boardType: j.boardType || 'Duet (standalone)', mode: 'standalone' };
+      }
+    }
+  } catch (_) {}
+
+  // Try DSF/SBC — /machine/noop is a lightweight ping
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 1500);
+    const r = await fetch(base + '/machine/noop', { signal: ctrl.signal });
+    clearTimeout(tid);
+    if (r.ok) {
+      return { ip, boardType: 'Duet (SBC/DSF)', mode: 'sbc' };
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+// Get the local /24 subnet using WebRTC ICE candidate leak.
+// Falls back to null if blocked (Firefox with privacy.resistFingerprinting, etc.)
+function getLocalSubnet() {
+  return new Promise(resolve => {
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      pc.createDataChannel('');
+      const found = new Set();
+      const done = () => { pc.close(); resolve(found.size ? [...found][0] : null); };
+      const t = setTimeout(done, 1000);
+      pc.onicecandidate = e => {
+        if (!e.candidate) return;
+        const m = e.candidate.candidate.match(/(\d+\.\d+\.\d+)\.\d+/);
+        if (m && !m[1].startsWith('169.254') && m[1] !== '127.0.0') {
+          found.add(m[1]);
+          clearTimeout(t);
+          done();
+        }
+      };
+      pc.createOffer().then(o => pc.setLocalDescription(o));
+    } catch (_) { resolve(null); }
+  });
+}
+
+let scanAbortFlag = false;
+
+async function runScan() {
+  const btn = document.getElementById('scanBtn');
+  const dropdown = document.getElementById('scanDropdown');
+  const scanStatus = document.getElementById('scanStatus');
+  const scanResults = document.getElementById('scanResults');
+
+  // Toggle dropdown off if already open
+  if (dropdown.style.display !== 'none') {
+    dropdown.style.display = 'none';
+    scanAbortFlag = true;
+    btn.textContent = 'Scan';
+    return;
+  }
+
+  scanAbortFlag = false;
+  dropdown.style.display = '';
+  scanResults.innerHTML = '';
+  scanStatus.textContent = 'Detecting local subnet…';
+  btn.textContent = 'Stop';
+
+  const subnet = await getLocalSubnet();
+  if (!subnet) {
+    scanStatus.textContent = 'Could not detect local subnet. Enter IP manually.';
+    btn.textContent = 'Scan';
+    return;
+  }
+
+  scanStatus.textContent = `Scanning ${subnet}.0/24…`;
+
+  // Build list of all 254 host IPs, scan in parallel batches of 30
+  const ips = Array.from({ length: 254 }, (_, i) => `${subnet}.${i + 1}`);
+  const BATCH = 30;
+  let found = 0;
+
+  for (let i = 0; i < ips.length; i += BATCH) {
+    if (scanAbortFlag) break;
+    const batch = ips.slice(i, i + BATCH);
+    const results = await Promise.all(batch.map(ip => probeDuet(ip)));
+    for (const res of results) {
+      if (!res) continue;
+      found++;
+      const item = document.createElement('div');
+      item.className = 'scan-result-item';
+      item.innerHTML = `
+        <span class="scan-result-board">${escHtml(res.boardType)}</span>
+        <span class="scan-result-ip">${escHtml(res.ip)}</span>
+        <span class="scan-result-mode">${res.mode === 'sbc' ? 'SBC / DSF' : 'Standalone RRF'}</span>`;
+      item.addEventListener('click', () => {
+        document.getElementById('hostInput').value = res.ip;
+        dropdown.style.display = 'none';
+        scanAbortFlag = true;
+        btn.textContent = 'Scan';
+      });
+      scanResults.appendChild(item);
+    }
+    const done = Math.min(i + BATCH, ips.length);
+    scanStatus.textContent = `Scanning ${subnet}.0/24… (${done}/254)${found ? ` — ${found} found` : ''}`;
+  }
+
+  if (!scanAbortFlag) {
+    scanStatus.textContent = found
+      ? `Found ${found} Duet device${found !== 1 ? 's' : ''} on ${subnet}.0/24`
+      : `No Duet devices found on ${subnet}.0/24`;
+    btn.textContent = 'Scan';
+  }
+}
+
+document.getElementById('scanBtn').addEventListener('click', runScan);
+
+// Close scan dropdown when clicking outside
+document.addEventListener('click', e => {
+  const dropdown = document.getElementById('scanDropdown');
+  if (dropdown.style.display === 'none') return;
+  if (!dropdown.closest('div').contains(e.target) && e.target.id !== 'scanBtn') {
+    dropdown.style.display = 'none';
+    scanAbortFlag = true;
+    document.getElementById('scanBtn').textContent = 'Scan';
+  }
+});
 
 // ────────────────────────────────────────────────────────────
 // Init
