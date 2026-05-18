@@ -422,7 +422,10 @@
   <div class="header-sep"></div>
   <button class="btn-ghost" id="expandAllBtn" disabled>Expand All</button>
   <button class="btn-ghost" id="collapseAllBtn" disabled>Collapse All</button>
-  <input type="text" id="searchBox" placeholder="Search properties..." disabled>
+  <div style="position:relative;display:flex;align-items:center">
+    <input type="text" id="searchBox" placeholder="Search properties..." disabled style="padding-right:28px">
+    <button id="searchClear" title="Clear search" style="position:absolute;right:6px;background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:16px;line-height:1;padding:0;display:none">×</button>
+  </div>
 </header>
 
 <div id="main">
@@ -1402,6 +1405,13 @@ function renderClassDetail(cls) {
 
   // Object model path breadcrumb
   const paths = findPaths(cls.name);
+  const sm = buildSubclassMap();
+  console.log('findPaths(' + cls.name + '):', paths);
+  console.log('  FilamentMonitorBase subclasses:', [...(sm['FilamentMonitorBase']||[])]);
+  console.log('  FilamentMonitor subclasses:', [...(sm['FilamentMonitor']||[])]);
+  console.log('  LaserFilamentMonitor parent:', model.classes['LaserFilamentMonitor']?.parent);
+  console.log('  FilamentMonitor parent:', model.classes['FilamentMonitor']?.parent);
+  console.log('  Duet3DFilamentMonitor parent:', model.classes['Duet3DFilamentMonitor']?.parent);
   if (paths.length > 0) {
     html += `<div class="om-path">`;
     html += paths.map(p => `<code class="om-path-code">${escHtml(p)}</code>`).join('');
@@ -1643,6 +1653,7 @@ function updateControls(enabled) {
   document.getElementById('expandAllBtn').disabled = !enabled;
   document.getElementById('collapseAllBtn').disabled = !enabled;
   document.getElementById('searchBox').disabled = !enabled;
+  if (!enabled) document.getElementById('searchClear').style.display = 'none';
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1668,9 +1679,20 @@ document.getElementById('collapseAllBtn').addEventListener('click', () => {
 // Search
 // ────────────────────────────────────────────────────────────
 let searchTimer;
-document.getElementById('searchBox').addEventListener('input', e => {
+const searchBox = document.getElementById('searchBox');
+const searchClear = document.getElementById('searchClear');
+
+searchBox.addEventListener('input', e => {
   clearTimeout(searchTimer);
+  searchClear.style.display = e.target.value ? 'block' : 'none';
   searchTimer = setTimeout(() => applySearch(e.target.value), 250);
+});
+
+searchClear.addEventListener('click', () => {
+  searchBox.value = '';
+  searchClear.style.display = 'none';
+  applySearch('');
+  searchBox.focus();
 });
 
 // ────────────────────────────────────────────────────────────
