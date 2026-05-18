@@ -327,41 +327,35 @@
   .prop-link { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
   .prop-link:hover { color: var(--pink); }
 
-  .prop-desc {
+  .prop-desc-cell {
     font-size: 12px;
     color: var(--text-dim);
-    margin-top: 3px;
     line-height: 1.5;
   }
-  .prop-desc .remarks {
+  .prop-desc-cell .remarks {
     margin-top: 2px;
     font-style: italic;
     opacity: 0.8;
   }
 
-  .enum-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 6px;
+  /* Inline enum value pills shown under the type */
+  .enum-inline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-top: 5px;
   }
-  .enum-chip {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 6px 10px;
+  .enum-pip {
     font-family: monospace;
-    font-size: 12px;
-    color: var(--green);
-  }
-  .enum-chip .chip-val { color: var(--yellow); margin-left: 4px; }
-  .enum-chip .chip-desc {
-    display: block;
-    font-family: 'Segoe UI', system-ui, sans-serif;
     font-size: 11px;
-    color: var(--text-dim);
-    margin-top: 3px;
-    font-style: italic;
+    color: var(--green);
+    background: rgba(166,227,161,0.1);
+    border: 1px solid rgba(166,227,161,0.25);
+    border-radius: 3px;
+    padding: 1px 6px;
+    cursor: default;
   }
+  .enum-pip[title] { cursor: help; }
 
   .placeholder {
     color: var(--text-dim);
@@ -1002,8 +996,6 @@ function buildTree() {
   scroll.innerHTML = '';
   const frag = document.createDocumentFragment();
   frag.appendChild(buildClassNode(root, 0, 'objectModel'));
-  const enumSection = buildEnumSection();
-  if (enumSection) frag.appendChild(enumSection);
   scroll.appendChild(frag);
 
   updateControls(true);
@@ -1118,43 +1110,40 @@ function populateClassChildren(cls, depth, container) {
       container.appendChild(node);
 
     } else if (childEnum) {
+      // Enum property — leaf row, clicking opens the parent class detail
       const node = document.createElement('div');
       node.className = 'tree-node';
+      const row = document.createElement('div');
+      row.className = 'tree-row';
 
-      const { row, toggle } = makeTreeRow(depth + 1, '▶', prop.name, childEnum.name, 'badge-enum',
-        propDesc?.summary || null);
-      node.appendChild(row);
+      const indent = document.createElement('span');
+      indent.className = 'tree-indent';
+      indent.style.width = ((depth + 1) * 16) + 'px';
+      const spacer = document.createElement('span');
+      spacer.className = 'tree-toggle';
 
-      const subChildren = document.createElement('div');
-      subChildren.className = 'tree-children collapsed';
-      for (const member of childEnum.members) {
-        const mDesc = getEnumMemberDesc(childEnum.name, member.key);
-        const mrow = document.createElement('div');
-        mrow.className = 'tree-row';
-        const mi = document.createElement('span');
-        mi.className = 'tree-indent';
-        mi.style.width = ((depth + 2) * 16) + 'px';
-        const mn = document.createElement('span');
-        mn.className = 'tree-name enum-val';
-        mn.textContent = member.key + (member.value !== undefined ? ' = ' + member.value : '');
-        mrow.appendChild(mi);
-        mrow.appendChild(mn);
-        if (mDesc?.summary) {
-          const tip = document.createElement('div');
-          tip.className = 'tree-desc-tooltip';
-          tip.textContent = mDesc.summary;
-          mrow.appendChild(tip);
-        }
-        subChildren.appendChild(mrow);
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'tree-name';
+      nameSpan.textContent = prop.name;
+
+      const typeDim = document.createElement('span');
+      typeDim.className = 'dim';
+      typeDim.textContent = childEnum.name;
+
+      row.appendChild(indent);
+      row.appendChild(spacer);
+      row.appendChild(nameSpan);
+      row.appendChild(typeDim);
+
+      if (propDesc?.summary) {
+        const tip = document.createElement('div');
+        tip.className = 'tree-desc-tooltip';
+        tip.textContent = propDesc.summary;
+        row.appendChild(tip);
       }
-      node.appendChild(subChildren);
 
-      toggle.addEventListener('click', e => {
-        e.stopPropagation();
-        const collapsed = subChildren.classList.toggle('collapsed');
-        toggle.textContent = collapsed ? '▶' : '▼';
-      });
-      row.addEventListener('click', () => selectNode(row, 'enum', childEnum.name));
+      node.appendChild(row);
+      row.addEventListener('click', () => selectNode(row, 'prop', cls.name + '.' + prop.name));
       container.appendChild(node);
 
     } else {
@@ -1204,66 +1193,6 @@ function populateClassChildren(cls, depth, container) {
   }
 }
 
-function buildEnumSection() {
-  const enumNames = Object.keys(model.enums);
-  if (!enumNames.length) return null;
-
-  const section = document.createElement('div');
-  section.style.cssText = 'margin-top:12px;border-top:1px solid var(--border);padding-top:8px';
-
-  const header = document.createElement('div');
-  header.style.cssText = 'font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);padding:4px 8px 4px 4px';
-  header.textContent = 'All Enums';
-  section.appendChild(header);
-
-  enumNames.sort().forEach(name => {
-    const en = model.enums[name];
-    const enDesc = getClassDesc(name);
-    const node = document.createElement('div');
-    node.className = 'tree-node';
-
-    const { row, toggle } = makeTreeRow(0, '▶', name, 'enum', 'badge-enum', enDesc?.summary || null);
-    const dim = document.createElement('span');
-    dim.className = 'dim';
-    dim.textContent = en.members.length + ' values';
-    row.appendChild(dim);
-    node.appendChild(row);
-
-    const children = document.createElement('div');
-    children.className = 'tree-children collapsed';
-    for (const member of en.members) {
-      const mDesc = getEnumMemberDesc(name, member.key);
-      const mrow = document.createElement('div');
-      mrow.className = 'tree-row';
-      const mi = document.createElement('span');
-      mi.className = 'tree-indent';
-      mi.style.width = '32px';
-      const mn = document.createElement('span');
-      mn.className = 'tree-name enum-val';
-      mn.textContent = member.key + (member.value !== undefined ? ' = ' + member.value : '');
-      mrow.appendChild(mi);
-      mrow.appendChild(mn);
-      if (mDesc?.summary) {
-        const tip = document.createElement('div');
-        tip.className = 'tree-desc-tooltip';
-        tip.textContent = mDesc.summary;
-        mrow.appendChild(tip);
-      }
-      children.appendChild(mrow);
-    }
-    node.appendChild(children);
-
-    toggle.addEventListener('click', e => {
-      e.stopPropagation();
-      const collapsed = children.classList.toggle('collapsed');
-      toggle.textContent = collapsed ? '▶' : '▼';
-    });
-    row.addEventListener('click', () => selectNode(row, 'enum', name));
-    section.appendChild(node);
-  });
-
-  return section;
-}
 
 // ────────────────────────────────────────────────────────────
 // Selection / detail panel
@@ -1306,21 +1235,10 @@ function wireDetailLinks(detail) {
 
 function renderClassDetail(cls) {
   const allProps = cls.props || [];
-  const primitives = allProps.filter(p => !model.classes[p.type] && !model.enums[p.type] &&
-    !isCollectionType(p.type) && !isDictType(p.type));
-  const objects = allProps.filter(p => model.classes[p.type] || isCollectionType(p.type) || isDictType(p.type));
-  const enumProps = allProps.filter(p => model.enums[p.type]);
-
   const clsDesc = getClassDesc(cls.name);
+  const hasAnyDesc = allProps.some(p => getPropDesc(cls.name, p.name));
 
   let html = `<h2>${escHtml(cls.name)}</h2>`;
-  html += `<div class="detail-meta">`;
-  html += `<span class="tag tag-class">class</span>`;
-  if (cls.parent && cls.parent !== 'ModelObject') {
-    html += `<span class="tag tag-class" style="cursor:pointer" data-goto="${escHtml(cls.parent)}">extends ${escHtml(cls.parent)}</span>`;
-  }
-  html += `<span style="font-size:12px;color:var(--text-dim);margin-left:4px">📄 ${escHtml(cls.file)}</span>`;
-  html += `</div>`;
 
   if (clsDesc?.summary) {
     html += `<div class="class-description">${escHtml(clsDesc.summary)}`;
@@ -1328,74 +1246,72 @@ function renderClassDetail(cls) {
     html += `</div>`;
   }
 
-  if (objects.length > 0) {
-    html += `<div class="section-title">Nested Objects / Collections</div>`;
-    html += renderPropTable(objects, cls, true);
-  }
-
-  if (enumProps.length > 0) {
-    html += `<div class="section-title">Enum Properties</div>`;
-    html += renderPropTable(enumProps, cls, false);
-  }
-
-  if (primitives.length > 0) {
-    html += `<div class="section-title">Primitive Properties</div>`;
-    html += renderPropTable(primitives, cls, false);
-  }
-
   if (allProps.length === 0) {
     html += `<div style="color:var(--text-dim);font-size:13px;margin-top:16px">No properties found.</div>`;
+    return html;
   }
 
-  return html;
-}
-
-function renderPropTable(props, cls, isObjects) {
-  const hasDesc = props.some(p => getPropDesc(cls.name, p.name));
-  const cols = hasDesc ? 4 : 3;
-  let html = `<table class="prop-table"><thead><tr>
-    <th>Property</th><th>Type</th><th>Default</th>${hasDesc ? '<th>Description</th>' : ''}
+  html += `<table class="prop-table"><thead><tr>
+    <th>Property</th>
+    <th>Type</th>
+    <th>Default</th>
+    ${hasAnyDesc ? '<th>Description</th>' : ''}
   </tr></thead><tbody>`;
 
-  for (const p of props) {
+  for (const p of allProps) {
     const desc = getPropDesc(cls.name, p.name);
     const inner = resolveCollectionType(p.type);
     const isCol = isCollectionType(p.type);
     const isDct = isDictType(p.type);
     const isEnum = !!model.enums[p.type];
+    const isCls = !!model.classes[p.type];
 
+    // Type cell: clickable link for object/enum types, plain text for primitives
     let typeHtml;
-    if (isCol && inner) {
+    if (isCol && inner && (model.classes[inner] || model.enums[inner])) {
       typeHtml = `<span class="prop-type prop-link" data-goto="${escHtml(inner)}">${escHtml(inner)}[]</span>`;
-    } else if (isDct && inner) {
+    } else if (isDct && inner && model.classes[inner]) {
       typeHtml = `<span class="prop-type prop-link" data-goto="${escHtml(inner)}">${escHtml(inner)}{}</span>`;
-    } else if (model.classes[p.type] || isEnum) {
+    } else if (isCol) {
+      typeHtml = `<span class="prop-type">${escHtml(shortType(p.type))}</span>`;
+    } else if (isCls || isEnum) {
       typeHtml = `<span class="prop-type prop-link" data-goto="${escHtml(p.type)}">${escHtml(p.type)}</span>`;
     } else {
       typeHtml = `<span class="prop-type">${escHtml(p.type)}</span>`;
     }
 
-    const tags = [
-      p.readonly ? '<span class="tag tag-readonly" style="font-size:10px;padding:1px 5px;margin-left:4px">readonly</span>' : '',
-      p.nullable ? '<span class="tag tag-nullable" style="font-size:10px;padding:1px 5px;margin-left:4px">nullable</span>' : ''
-    ].join('');
+    // Nullable indicator inline with type
+    if (p.nullable) typeHtml += ` <span style="color:var(--text-dim);font-size:11px">or null</span>`;
 
+    // Description cell
     let descHtml = '';
-    if (hasDesc) {
+    if (hasAnyDesc) {
       if (desc?.summary) {
-        descHtml = `<span class="prop-desc">${escHtml(desc.summary)}`;
-        if (desc.remarks) descHtml += `<span class="remarks">${escHtml(desc.remarks)}</span>`;
-        descHtml += `</span>`;
+        descHtml = escHtml(desc.summary);
+        if (desc.remarks) descHtml += `<div class="remarks">${escHtml(desc.remarks)}</div>`;
       } else {
-        descHtml = `<span style="color:var(--text-dim);font-size:11px">—</span>`;
+        descHtml = `<span style="color:var(--text-dim)">—</span>`;
       }
     }
 
+    // Enum: show allowed values inline under the type as small chips
+    let enumInline = '';
+    if (isEnum) {
+      const en = model.enums[p.type];
+      enumInline = `<div class="enum-inline">` +
+        en.members.map(m => {
+          const md = getEnumMemberDesc(en.name, m.key);
+          const tip = md?.summary ? ` title="${escHtml(md.summary)}"` : '';
+          return `<span class="enum-pip"${tip}>${escHtml(m.key)}</span>`;
+        }).join('') +
+        `</div>`;
+    }
+
     html += `<tr>
-      <td><span class="prop-name ${p.readonly ? 'is-readonly' : ''}">${escHtml(p.name)}</span>${tags}</td>
-      <td>${typeHtml}</td>
+      <td><span class="prop-name">${escHtml(p.name)}</span></td>
+      <td>${typeHtml}${enumInline}</td>
       <td><span class="prop-default">${escHtml(p.default || '')}</span></td>
-      ${hasDesc ? `<td>${descHtml}</td>` : ''}
+      ${hasAnyDesc ? `<td class="prop-desc-cell">${descHtml}</td>` : ''}
     </tr>`;
   }
 
@@ -1407,36 +1323,26 @@ function renderEnumDetail(en) {
   const hasMemberDescs = en.members.some(m => getEnumMemberDesc(en.name, m.key));
 
   let html = `<h2>${escHtml(en.name)}</h2>`;
-  html += `<div class="detail-meta"><span class="tag tag-enum">enum</span>`;
-  html += `<span style="font-size:12px;color:var(--text-dim);margin-left:4px">📄 ${escHtml(en.file)}</span>`;
-  html += `</div>`;
 
   if (enDesc?.summary) {
     html += `<div class="class-description">${escHtml(enDesc.summary)}</div>`;
   }
 
-  html += `<div class="section-title">${en.members.length} Values</div>`;
+  html += `<table class="prop-table"><thead><tr>
+    <th>Value</th>${hasMemberDescs ? '<th>Description</th>' : ''}
+  </tr></thead><tbody>`;
 
-  if (hasMemberDescs) {
-    html += `<table class="prop-table"><thead><tr><th>Value</th><th>Integer</th><th>Description</th></tr></thead><tbody>`;
-    for (const m of en.members) {
-      const d = getEnumMemberDesc(en.name, m.key);
-      html += `<tr>
-        <td><span style="font-family:monospace;color:var(--green)">${escHtml(m.key)}</span></td>
-        <td><span class="prop-default">${m.value !== undefined ? escHtml(String(m.value)) : ''}</span></td>
-        <td><span class="prop-desc">${d?.summary ? escHtml(d.summary) : '<span style="color:var(--text-dim)">—</span>'}</span></td>
-      </tr>`;
-    }
-    html += '</tbody></table>';
-  } else {
-    html += `<div class="enum-grid">`;
-    for (const m of en.members) {
-      html += `<div class="enum-chip">${escHtml(m.key)}${m.value !== undefined ? `<span class="chip-val">= ${escHtml(String(m.value))}</span>` : ''}</div>`;
-    }
-    html += `</div>`;
+  for (const m of en.members) {
+    const d = getEnumMemberDesc(en.name, m.key);
+    html += `<tr>
+      <td><span style="font-family:monospace;color:var(--green)">${escHtml(m.key)}</span>
+        ${m.value !== undefined ? `<span class="prop-default" style="margin-left:8px">= ${escHtml(String(m.value))}</span>` : ''}
+      </td>
+      ${hasMemberDescs ? `<td class="prop-desc-cell">${d?.summary ? escHtml(d.summary) : '<span style="color:var(--text-dim)">—</span>'}</td>` : ''}
+    </tr>`;
   }
 
-  return html;
+  return html + '</tbody></table>';
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1461,15 +1367,20 @@ function applySearch(term) {
       }
     }
   }
-  for (const en of Object.values(model.enums)) {
-    const enDesc = getClassDesc(en.name);
-    if (en.name.toLowerCase().includes(lc) ||
-        en.members.some(m => {
-          const md = getEnumMemberDesc(en.name, m.key);
-          return m.key.toLowerCase().includes(lc) || md?.summary?.toLowerCase().includes(lc);
-        }) ||
-        enDesc?.summary?.toLowerCase().includes(lc)) {
-      matches.push({ en });
+  // Also match on enum type name or member names (surfaces via the property that uses them)
+  for (const cls of Object.values(model.classes)) {
+    for (const prop of cls.props) {
+      const en = model.enums[prop.type];
+      if (!en) continue;
+      const alreadyMatched = matches.some(m => m.cls === cls && m.prop === prop);
+      if (alreadyMatched) continue;
+      if (en.name.toLowerCase().includes(lc) ||
+          en.members.some(m => {
+            const md = getEnumMemberDesc(en.name, m.key);
+            return m.key.toLowerCase().includes(lc) || md?.summary?.toLowerCase().includes(lc);
+          })) {
+        matches.push({ cls, prop });
+      }
     }
   }
 
@@ -1529,18 +1440,6 @@ function applySearch(term) {
       count++;
     }
     frag.appendChild(groupEl);
-  }
-
-  for (const m of matches) {
-    if (m.en) {
-      const row = document.createElement('div');
-      row.className = 'tree-row';
-      row.innerHTML = `<span class="tree-name">${highlightText(m.en.name, lc)}</span>
-        <span class="tree-badge badge-enum">enum</span>`;
-      row.addEventListener('click', () => selectNode(row, 'enum', m.en.name));
-      frag.appendChild(row);
-      count++;
-    }
   }
 
   scroll.appendChild(frag);
