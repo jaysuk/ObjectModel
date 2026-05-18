@@ -1362,6 +1362,12 @@ function renderClassDetail(cls) {
   let html = `<h2>${escHtml(cls.name)}</h2>`;
 
   // Object model path breadcrumb
+  const _lm = model.classes['LaserFilamentMonitor'];
+  console.log('LaserFilamentMonitor:', _lm ? {parent:_lm.parent, props:_lm.props.map(p=>p.name)} : 'NOT FOUND');
+  const _sm = buildSubclassMap();
+  console.log('FilamentMonitor subs:', [...(_sm['FilamentMonitor']||[])]);
+  console.log('FilamentMonitorBase subs:', [...(_sm['FilamentMonitorBase']||[])]);
+  console.log('findPaths result:', findPaths(cls.name));
   const paths = findPaths(cls.name);
   if (paths.length > 0) {
     html += `<div class="om-path">`;
