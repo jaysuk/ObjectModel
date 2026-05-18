@@ -483,6 +483,7 @@
   .scan-result-ip { font-family: monospace; color: var(--accent); font-size: 12px; }
   .scan-result-board { color: var(--text); font-weight: 500; }
   .scan-result-mode { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
+  #subnetInput { width: 120px; font-size: 13px; }
 
   .prop-table th.val-col, .prop-table td.val-col {
     color: var(--yellow);
@@ -2672,7 +2673,7 @@ function getLocalSubnet() {
       pc.createDataChannel('');
       const found = new Set();
       const done = () => { pc.close(); resolve(found.size ? [...found][0] : null); };
-      const t = setTimeout(done, 1000);
+      const t = setTimeout(done, 1200);
       pc.onicecandidate = e => {
         if (!e.candidate) return;
         const m = e.candidate.candidate.match(/(\d+\.\d+\.\d+)\.\d+/);
@@ -2687,6 +2688,28 @@ function getLocalSubnet() {
   });
 }
 
+// Show a subnet input in the dropdown and return a Promise that resolves
+// when the user clicks Scan, or null if they close the dropdown.
+function askSubnet(defaultSubnet) {
+  const scanStatus = document.getElementById('scanStatus');
+  const scanResults = document.getElementById('scanResults');
+  scanStatus.textContent = 'Enter your subnet to scan:';
+  scanResults.innerHTML = `
+    <div style="padding:10px 12px;display:flex;gap:6px;align-items:center">
+      <input id="subnetInput" type="text" value="${escHtml(defaultSubnet)}"
+        style="flex:1;font-family:monospace" placeholder="192.168.1">
+      <span style="font-size:12px;color:var(--text-dim)">.0/24</span>
+      <button class="btn" id="subnetScanBtn" style="padding:5px 10px;font-size:12px">Go</button>
+    </div>`;
+  return new Promise(resolve => {
+    const input = document.getElementById('subnetInput');
+    const goBtn = document.getElementById('subnetScanBtn');
+    const go = () => resolve(input.value.trim() || null);
+    goBtn.addEventListener('click', go);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+  });
+}
+
 let scanAbortFlag = false;
 
 async function runScan() {
@@ -2695,8 +2718,8 @@ async function runScan() {
   const scanStatus = document.getElementById('scanStatus');
   const scanResults = document.getElementById('scanResults');
 
-  // Toggle dropdown off if already open
-  if (dropdown.style.display !== 'none') {
+  // Toggle dropdown off if already open and not scanning
+  if (dropdown.style.display !== 'none' && btn.textContent !== 'Stop') {
     dropdown.style.display = 'none';
     scanAbortFlag = true;
     btn.textContent = 'Scan';
@@ -2709,9 +2732,23 @@ async function runScan() {
   scanStatus.textContent = 'Detecting local subnet…';
   btn.textContent = 'Stop';
 
-  const subnet = await getLocalSubnet();
+  let subnet = await getLocalSubnet();
   if (!subnet) {
-    scanStatus.textContent = 'Could not detect local subnet. Enter IP manually.';
+    // Guess a sensible default from the host input if it looks like an IP
+    const hostVal = document.getElementById('hostInput').value.trim();
+    const hostMatch = hostVal.match(/^(\d+\.\d+\.\d+)\.\d+$/);
+    const defaultSubnet = hostMatch ? hostMatch[1] : '192.168.1';
+    subnet = await askSubnet(defaultSubnet);
+    if (!subnet || scanAbortFlag) {
+      btn.textContent = 'Scan';
+      return;
+    }
+    scanResults.innerHTML = '';
+  }
+
+  // Validate subnet format (x.x.x)
+  if (!/^\d+\.\d+\.\d+$/.test(subnet)) {
+    scanStatus.textContent = 'Invalid subnet format. Use x.x.x (e.g. 192.168.1)';
     btn.textContent = 'Scan';
     return;
   }
