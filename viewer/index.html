@@ -303,6 +303,8 @@
   .tag-enum { background: rgba(166,227,161,0.2); color: var(--green); }
   .tag-readonly { background: rgba(203,166,247,0.2); color: var(--accent2); }
   .tag-nullable { background: rgba(249,226,175,0.2); color: var(--yellow); }
+  .tag-sbc-only { background: rgba(250,179,135,0.2); color: var(--orange); }
+  .tag-sbc-also { background: rgba(148,226,213,0.15); color: var(--teal); }
 
   .section-title {
     font-size: 12px;
@@ -696,11 +698,18 @@ function parseDSFFile(src) {
       const remarks = extractXmlTag(docBlock, 'remarks');
       if (!summary) continue;
 
-      // Skip blank lines and attribute lines (start with [ after trimming)
+      // Skip blank lines and attribute lines (start with [ after trimming),
+      // but capture [SbcProperty(...)] if present.
       let j = i;
+      let sbcProperty = null; // null = not marked, true = SBC+standalone, false = SBC only
       while (j < lines.length) {
         const t = lines[j].trim();
-        if (t === '' || t.startsWith('[')) { j++; continue; }
+        if (t === '') { j++; continue; }
+        if (t.startsWith('[')) {
+          const sbcM = t.match(/^\[SbcProperty\(\s*(true|false)\s*\)\]/);
+          if (sbcM) sbcProperty = sbcM[1] === 'true';
+          j++; continue;
+        }
         break;
       }
       if (j >= lines.length) continue;
@@ -737,7 +746,9 @@ function parseDSFFile(src) {
         const enclosing = findEnclosingType(lines, j);
         if (enclosing) {
           if (!result[enclosing]) result[enclosing] = {};
-          result[enclosing][pascalToCamel(propName)] = { summary, remarks };
+          const entry = { summary, remarks };
+          if (sbcProperty !== null) entry.sbcProperty = sbcProperty;
+          result[enclosing][pascalToCamel(propName)] = entry;
         }
         continue;
       }
@@ -1729,8 +1740,15 @@ function renderClassDetail(cls) {
     const rowClass = drillTarget ? ` class="prop-row-drilldown" data-goto="${escHtml(drillTarget)}"` : '';
     const chevron = drillTarget ? `<span class="prop-drilldown-chevron">›</span>` : '';
 
+    let sbcBadge = '';
+    if (desc?.sbcProperty === false) {
+      sbcBadge = ` <span class="tag tag-sbc-only" title="Only available when used with an SBC running DuetSoftwareFramework">SBC only</span>`;
+    } else if (desc?.sbcProperty === true) {
+      sbcBadge = ` <span class="tag tag-sbc-also" title="Managed by DuetSoftwareFramework but also available in standalone mode">SBC</span>`;
+    }
+
     html += `<tr${rowClass}>
-      <td><span class="prop-name">${escHtml(p.name)}</span>${chevron}</td>
+      <td><span class="prop-name">${escHtml(p.name)}</span>${chevron}${sbcBadge}</td>
       <td>${typeHtml}${enumInline}</td>
       <td><span class="prop-default">${escHtml(p.default || '')}</span></td>
       ${hasAnyDesc ? `<td class="prop-desc-cell">${descHtml}</td>` : ''}
