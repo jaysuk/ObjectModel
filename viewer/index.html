@@ -447,68 +447,31 @@
   }
   #resizer:hover, #resizer.dragging { background: var(--accent); }
 
-  /* ── live mode ── */
-  .mode-btn { border-radius: 0; border: none; font-size: 12px; padding: 5px 12px; cursor: pointer; background: transparent; color: var(--text); }
-  .mode-btn:hover:not(:disabled) { color: var(--accent); }
-  .mode-btn:disabled { opacity: 0.35; cursor: default; }
-  .mode-btn.mode-active { background: var(--accent); color: #1e1e2e; }
-  .mode-btn.mode-active:hover { filter: brightness(1.1); }
-  #modeToggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
-
-  #liveWarning, #httpsWarning {
-    display: none;
-    border-bottom: 1px solid rgba(243,139,168,0.3);
-    color: var(--red);
-    font-size: 12px;
-    padding: 5px 16px;
-    text-align: center;
-    flex-shrink: 0;
-  }
-  #liveWarning { background: rgba(243,139,168,0.12); }
-  #httpsWarning {
-    background: rgba(250,179,135,0.12);
-    border-color: rgba(250,179,135,0.3);
-    color: var(--yellow);
-  }
-  #connectProgress {
-    display: none;
-    font-size: 11px;
+  /* copy-path button */
+  .copy-path-btn {
+    background: none;
+    border: none;
     color: var(--text-dim);
-    white-space: nowrap;
-  }
-
-  #connectBtn { min-width: 90px; }
-  #hostInput { width: 180px; }
-  #passwordInput { width: 100px; }
-
-  .live-value { font-family: monospace; font-size: 12px; color: var(--yellow); }
-  .live-value.is-null { color: var(--text-dim); }
-  .live-value.is-bool-true { color: var(--green); }
-  .live-value.is-bool-false { color: var(--red); }
-
-  @keyframes live-flash { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
-  .live-updated { animation: live-flash 0.5s ease; }
-
-  .scan-result-item {
-    display: flex;
-    flex-direction: column;
-    padding: 8px 12px;
     cursor: pointer;
-    border-bottom: 1px solid rgba(61,61,92,0.4);
     font-size: 13px;
+    padding: 0 4px;
+    line-height: 1;
+    opacity: 0.5;
+    transition: opacity 0.15s;
+    vertical-align: middle;
   }
-  .scan-result-item:last-child { border-bottom: none; }
-  .scan-result-item:hover { background: var(--surface2); }
-  .scan-result-ip { font-family: monospace; color: var(--accent); font-size: 12px; }
-  .scan-result-board { color: var(--text); font-weight: 500; }
-  .scan-result-mode { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
-  #subnetInput { width: 120px; font-size: 13px; }
-
-  .prop-table th.val-col, .prop-table td.val-col {
-    color: var(--yellow);
-    font-family: monospace;
-    font-size: 12px;
+  .copy-path-btn:hover { opacity: 1; color: var(--accent); }
+  .copy-path-tooltip {
+    position: absolute;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: var(--green);
+    pointer-events: none;
     white-space: nowrap;
+    z-index: 100;
   }
 </style>
 </head>
@@ -524,23 +487,6 @@
     </select>
     <button class="btn" id="loadBtn" disabled>Load</button>
   </span>
-  <div style="width:1px;height:24px;background:var(--border);flex-shrink:0"></div>
-  <div style="position:relative;display:flex;align-items:center;gap:6px">
-    <input type="text" id="hostInput" placeholder="printer.local or IP" title="Printer hostname or IP address">
-    <input type="password" id="passwordInput" placeholder="Password" title="Printer password (leave blank for none)">
-    <button class="btn-ghost" id="scanBtn" title="Scan local network for Duet printers">Scan</button>
-    <div id="scanDropdown" style="display:none;position:absolute;top:calc(100% + 6px);left:0;min-width:260px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);z-index:200;overflow:hidden">
-      <div id="scanStatus" style="padding:8px 12px;font-size:12px;color:var(--text-dim);border-bottom:1px solid var(--border)">Ready to scan</div>
-      <div id="scanResults"></div>
-    </div>
-  </div>
-  <button class="btn" id="connectBtn">Connect</button>
-  <span id="connectProgress"></span>
-  <button class="btn-ghost" id="saveForPrinterBtn" title="Download a copy to serve from your printer's www folder — fixes HTTPS mixed-content blocking">Save for printer</button>
-  <div id="modeToggle">
-    <button class="mode-btn mode-active" id="modeRef" disabled>Reference</button>
-    <button class="mode-btn" id="modeLive" disabled>Live</button>
-  </div>
   <div class="header-sep"></div>
   <span id="refOnlyControls" style="display:contents">
     <button class="btn-ghost" id="expandAllBtn" disabled>Expand All</button>
@@ -551,9 +497,6 @@
     </div>
   </span>
 </header>
-
-<div id="httpsWarning">⚠ You are viewing this page over HTTPS. Browsers block HTTPS pages from connecting to HTTP printers (mixed content). Use the <strong>Save for printer</strong> button, place <code>om-viewer.html</code> in your printer's <code>www</code> folder, and open it directly from your printer.</div>
-<div id="liveWarning">⚠ Connection lost — showing last known values. Retrying…</div>
 
 <div id="main">
   <div id="treePanel">
@@ -588,7 +531,7 @@
 // ────────────────────────────────────────────────────────────
 // Constants
 // ────────────────────────────────────────────────────────────
-const VIEWER_VERSION = '1.5.0';
+const VIEWER_VERSION = '2.0.0';
 const OM_REPO   = 'Duet3D/ObjectModel';
 const DSF_REPO  = 'Duet3D/DuetSoftwareFramework';
 const OM_RAW    = 'https://raw.githubusercontent.com/' + OM_REPO;
@@ -608,20 +551,6 @@ let lastDetailType = null;  // 'class' | 'enum'
 let lastDetailKey = null;   // class or enum name currently shown in detail panel
 let navStack = [];           // [{type, key}] — breadcrumb history
 
-// ── Live mode state ──────────────────────────────────────────
-let liveMode = false;
-let liveHost = '';
-let livePassword = 'reprap';
-let liveEndpoint = null;     // 'rr_model' | 'machine_status'
-let liveData = null;
-let liveConnected = false;
-let livePollTimer = null;
-let liveNavStack = [];       // [{path, label}]
-let liveLastDetailPath = null;
-let liveLastDetailLabel = null;
-const liveValueCells = new Map(); // valuePath → TD element
-let dsfSessionKey = null;    // X-Session-Key for DSF/SBC
-let lastSeqs = {};           // seqs from last poll — detect which keys changed
 
 // ────────────────────────────────────────────────────────────
 // Utilities
@@ -1516,7 +1445,6 @@ function restoreDetailState(state) {
 
 // Browser back/forward
 window.addEventListener('popstate', e => {
-  if (liveMode) return;
   if (!e.state || !model.classes['ObjectModel']) return;
   restoreDetailState(e.state);
 });
@@ -1751,6 +1679,12 @@ function wireDetailLinks(detail) {
       else if (model.enums[target]) navigateDetail('enum', target);
     });
   });
+  detail.querySelectorAll('[data-copy-path]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      copyPathToClipboard(btn.dataset.copyPath, btn);
+    });
+  });
 }
 
 function renderBreadcrumb() {
@@ -1768,13 +1702,15 @@ function renderClassDetail(cls) {
   const hasAnyDesc = allProps.some(p => getPropDesc(cls.name, p.name));
 
   let html = renderBreadcrumb();
+  html += `<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">`;
   html += `<h2>${escHtml(cls.name)}</h2>`;
+  html += `</div>`;
 
   // Object model path breadcrumb
   const paths = findPaths(cls.name);
   if (paths.length > 0) {
     html += `<div class="om-path">`;
-    html += paths.map(p => `<code class="om-path-code">${escHtml(p)}</code>`).join('');
+    html += paths.map(p => `<code class="om-path-code">${escHtml(p)}</code><button class="copy-path-btn" data-copy-path="${escHtml(p)}" title="Copy path">⎘</button>`).join('');
     html += `</div>`;
   }
 
@@ -1794,7 +1730,11 @@ function renderClassDetail(cls) {
     <th>Type</th>
     <th>Default</th>
     ${hasAnyDesc ? '<th>Description</th>' : ''}
+    <th style="width:32px"></th>
   </tr></thead><tbody>`;
+
+  // Compute the base OM path for copy-path (use first path if any, else camelCase class name)
+  const basePath = paths.length > 0 ? paths[0] : (cls.name.charAt(0).toLowerCase() + cls.name.slice(1));
 
   for (const p of allProps) {
     const desc = getPropDesc(cls.name, p.name);
@@ -1860,11 +1800,16 @@ function renderClassDetail(cls) {
       sbcBadge = ` <span class="tag tag-sbc-also" title="Managed by DuetSoftwareFramework but also available in standalone mode">SBC</span>`;
     }
 
+    // Build copy path: base path with array suffix for collections, then .propName
+    const isColOrDict = isCol || isDct;
+    const propCopyPath = (basePath ? basePath + (isColOrDict ? '[0].' : '.') : '') + p.name;
+
     html += `<tr${rowClass}>
       <td><span class="prop-name">${escHtml(p.name)}</span>${chevron}${sbcBadge}</td>
       <td>${typeHtml}${enumInline}</td>
       <td><span class="prop-default">${escHtml(p.default || '')}</span></td>
       ${hasAnyDesc ? `<td class="prop-desc-cell">${descHtml}</td>` : ''}
+      <td style="text-align:center;white-space:nowrap"><button class="copy-path-btn" data-copy-path="${escHtml(propCopyPath)}" title="Copy path: ${escHtml(propCopyPath)}">⎘</button></td>
     </tr>`;
   }
 
@@ -2034,6 +1979,19 @@ function updateControls(enabled) {
   if (!enabled) document.getElementById('searchClear').style.display = 'none';
 }
 
+function copyPathToClipboard(path, triggerEl) {
+  navigator.clipboard.writeText(path).then(() => {
+    const tooltip = document.createElement('div');
+    tooltip.className = 'copy-path-tooltip';
+    tooltip.textContent = 'Copied!';
+    document.body.appendChild(tooltip);
+    const rect = triggerEl.getBoundingClientRect();
+    tooltip.style.left = (rect.left + window.scrollX) + 'px';
+    tooltip.style.top = (rect.top + window.scrollY - 28) + 'px';
+    setTimeout(() => tooltip.remove(), 1200);
+  }).catch(() => {});
+}
+
 // ────────────────────────────────────────────────────────────
 // Expand / Collapse All
 // ────────────────────────────────────────────────────────────
@@ -2116,943 +2074,13 @@ document.addEventListener('mouseup', () => {
   document.body.style.cursor = ''; document.body.style.userSelect = '';
 });
 
-// ────────────────────────────────────────────────────────────
-// Live mode — networking
-// ────────────────────────────────────────────────────────────
-async function fetchLiveJSON(url, extraHeaders = {}) {
-  const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), 5000);
-  try {
-    const headers = { ...extraHeaders };
-    if (dsfSessionKey) headers['X-Session-Key'] = dsfSessionKey;
-    const r = await fetch(url, { signal: controller.signal, headers });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.json();
-  } finally {
-    clearTimeout(tid);
-  }
-}
-
-// Query a single rr_model key, handling array pagination via the `next` field.
-// flags=d99vno: depth 99, include key names, include nulls, omit field metadata.
-// When response.next > 0, RRF has more array elements — re-fetch with a{next} suffix.
-async function queryModelKey(key, forceArray = false) {
-  let result = null;
-  let next = 0;
-  do {
-    const flags = 'd99vno' + (next !== 0 || forceArray ? 'a' + next : '');
-    const url = liveHost + '/rr_model?key=' + encodeURIComponent(key) + '&flags=' + flags;
-    const res = await fetchLiveJSON(url);
-    next = res.next || 0;
-    if (result === null || !Array.isArray(result)) {
-      result = res.result;
-    } else {
-      result = result.concat(res.result);
-    }
-  } while (next !== 0);
-  return result;
-}
-
-// Fetch the complete object model by querying each top-level key individually
-// (mirroring the DWC PollConnector approach). This avoids the response size cap
-// that causes partial results when fetching the whole model in one request.
-async function fetchFullRRModel() {
-  const prog = document.getElementById('connectProgress');
-  const setProgress = (msg) => { if (prog) { prog.style.display = ''; prog.textContent = msg; } };
-  const clearProgress = () => { if (prog) prog.style.display = 'none'; };
-
-  // Get seqs first — tells us which keys exist and their current sequence numbers
-  setProgress('Reading keys…');
-  const seqsRes = await fetchLiveJSON(liveHost + '/rr_model?key=seqs');
-  if (seqsRes?.result) lastSeqs = seqsRes.result;
-  const topKeys = seqsRes?.result ? Object.keys(seqsRes.result).filter(k => k !== 'reply') : null;
-
-  // Fall back to a root fetch to discover keys if seqs isn't available
-  const keyList = topKeys || Object.keys((await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn'))?.result || {});
-  console.log('[live] model keys to fetch:', keyList);
-
-  const combined = {};
-  for (let i = 0; i < keyList.length; i++) {
-    const key = keyList[i];
-    setProgress(key + '… (' + (i + 1) + '/' + keyList.length + ')');
-    try {
-      combined[key] = await queryModelKey(key);
-      // move.axes can exceed response size — fetch separately with array pagination
-      if (key === 'move' && combined.move?.axes !== undefined) {
-        combined.move.axes = await queryModelKey('move.axes', true);
-      }
-    } catch (e) {
-      console.warn('[live] failed to fetch key=' + key + ':', e.message);
-    }
-  }
-  clearProgress();
-  return combined;
-}
-
-async function liveConnect() {
-  const raw = document.getElementById('hostInput').value.trim();
-  if (!raw) return;
-  liveHost = raw.startsWith('http') ? raw.replace(/\/$/, '') : 'http://' + raw.replace(/\/$/, '');
-  livePassword = document.getElementById('passwordInput').value || 'reprap';
-  localStorage.setItem('liveHost', raw);
-  localStorage.setItem('livePassword', document.getElementById('passwordInput').value);
-
-  const btn = document.getElementById('connectBtn');
-  btn.disabled = true;
-  btn.textContent = 'Connecting…';
-
-  // Try standalone RRF: connect first (establishes session), then fetch model
-  let connected = false;
-  let lastError = '';
-  try {
-    console.log('[live] trying RRF standalone:', liveHost + '/rr_connect?password=***');
-    const connRes = await fetchLiveJSON(liveHost + '/rr_connect?password=' + encodeURIComponent(livePassword));
-    console.log('[live] rr_connect response:', JSON.stringify(connRes));
-    if (typeof connRes.err === 'number') {
-      // Fetch full model — rr_model has a response size limit and may return a `next`
-      // key indicating more data. Fetch each top-level key individually to get everything.
-      const fullModel = await fetchFullRRModel();
-      if (fullModel) {
-        liveEndpoint = 'rr_model';
-        liveData = fullModel;
-        connected = true;
-      } else {
-        lastError = 'rr_model returned no data';
-      }
-    } else {
-      lastError = 'rr_connect err field unexpected: ' + JSON.stringify(connRes);
-    }
-  } catch (e) {
-    lastError = 'RRF standalone: ' + e.message;
-    console.warn('[live] RRF standalone failed:', e);
-  }
-
-  // Try DSF/SBC — requires /machine/connect to get session key first
-  if (!connected) {
-    try {
-      console.log('[live] trying DSF/SBC:', liveHost + '/machine/connect');
-      dsfSessionKey = null;
-      const connRes = await fetchLiveJSON(liveHost + '/machine/connect?password=' + encodeURIComponent(livePassword));
-      console.log('[live] machine/connect response:', JSON.stringify(connRes));
-      if (connRes?.sessionKey) {
-        dsfSessionKey = connRes.sessionKey;
-        const data = await fetchLiveJSON(liveHost + '/machine/status');
-        if (data && typeof data === 'object') {
-          liveEndpoint = 'machine_status';
-          liveData = data;
-          connected = true;
-        }
-      }
-    } catch (e) {
-      lastError += ' | DSF: ' + e.message;
-      console.warn('[live] DSF failed:', e);
-    }
-  }
-
-  if (!connected) {
-    btn.disabled = false;
-    btn.textContent = 'Connect';
-    const isCors = lastError.includes('CORS') || lastError.includes('Failed to fetch') || lastError.includes('NetworkError');
-    const isHttps = location.protocol === 'https:';
-    const isFileOrigin = location.protocol === 'file:';
-    let msg = 'Could not connect to printer at ' + liveHost;
-    if (isCors && isHttps && liveHost.startsWith('http:')) {
-      msg += '\n\nThis is a mixed-content block. You are viewing this page over HTTPS but the printer is HTTP. Browsers block HTTPS pages from connecting to HTTP resources regardless of CORS settings.\n\nFix: use the "Save for printer" button to download a copy of this viewer, then put it in the www folder on your printer\'s SD card and open it directly from your printer.';
-    } else if (isCors && isFileOrigin) {
-      msg += '\n\nYou are opening this viewer as a local file (file://) which browsers treat as a "null" origin. Browsers block cross-origin requests from null origins.\n\nFix: use the "Save for printer" button to download a copy and serve it from your printer\'s www folder.';
-    } else if (isCors) {
-      msg += '\n\nThis is likely a CORS error. Make sure your printer\'s config.g contains:\n\n  M586 C"*"\n\nand that the printer has been rebooted since adding it.';
-    } else {
-      msg += '\n\nError: ' + lastError;
-    }
-    showError(msg);
-    return;
-  }
-
-  liveConnected = true;
-  btn.disabled = false;
-  btn.textContent = 'Disconnect';
-  btn.onclick = liveDisconnect;
-
-  document.getElementById('modeLive').disabled = false;
-  document.getElementById('modeRef').disabled = false;
-
-  setDSFIndicator('ok', 'Live: ' + (liveEndpoint === 'rr_model' ? 'RRF standalone' : 'DSF/SBC'));
-  startLivePoll();
-}
-
-function liveDisconnect() {
-  stopLivePoll();
-  liveConnected = false;
-  liveEndpoint = null;
-  liveData = null;
-  dsfSessionKey = null;
-
-  const btn = document.getElementById('connectBtn');
-  btn.textContent = 'Connect';
-  btn.onclick = null;
-
-  document.getElementById('modeLive').disabled = true;
-  document.getElementById('liveWarning').style.display = 'none';
-  setDSFIndicator('none', 'DSF descriptions: —');
-
-  if (liveMode) switchMode('reference');
-}
-
-function startLivePoll() {
-  stopLivePoll();
-  livePollTimer = setTimeout(livePoll, 1000);
-}
-
-function stopLivePoll() {
-  if (livePollTimer !== null) { clearTimeout(livePollTimer); livePollTimer = null; }
-}
-
-// Deep-merge patch into base object in-place (RRF poll updates are partial patches)
-function deepMerge(base, patch) {
-  if (patch === null || typeof patch !== 'object') return patch;
-  // Merge arrays element-by-element so static fields in array objects are preserved
-  if (Array.isArray(patch)) {
-    if (!Array.isArray(base) || base.length !== patch.length) return patch;
-    return patch.map((p, i) => deepMerge(base[i], p));
-  }
-  if (base === null || typeof base !== 'object' || Array.isArray(base)) return patch;
-  const out = Object.assign({}, base);
-  for (const key of Object.keys(patch)) {
-    out[key] = deepMerge(base[key], patch[key]);
-  }
-  return out;
-}
-
-async function livePoll() {
-  try {
-    let data = liveData;
-    if (liveEndpoint === 'rr_model') {
-      // Fetch live-changing fields + new seqs in one cheap request
-      let pollRes;
-      try {
-        pollRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
-      } catch (_) {
-        // Session expired — reconnect and retry
-        await fetchLiveJSON(liveHost + '/rr_connect?password=' + encodeURIComponent(livePassword));
-        pollRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
-      }
-      // Merge live patch (temperatures, positions, etc.) into full model
-      data = deepMerge(liveData, pollRes.result);
-
-      // Check seqs — re-fetch any key whose sequence number has changed
-      const seqsRes = await fetchLiveJSON(liveHost + '/rr_model?key=seqs');
-      if (seqsRes?.result) {
-        const newSeqs = seqsRes.result;
-        for (const key of Object.keys(newSeqs)) {
-          if (key === 'reply') continue;
-          if (newSeqs[key] !== lastSeqs[key]) {
-            try {
-              const updated = await queryModelKey(key);
-              if (key === 'move' && updated?.axes !== undefined) {
-                updated.axes = await queryModelKey('move.axes', true);
-              }
-              data[key] = updated;
-            } catch (e) {
-              console.warn('[live] seq re-fetch failed for key=' + key, e.message);
-            }
-          }
-        }
-        lastSeqs = newSeqs;
-      }
-    } else {
-      // DSF session can expire — reconnect transparently if needed
-      try {
-        data = await fetchLiveJSON(liveHost + '/machine/status');
-      } catch (_) {
-        const connRes = await fetchLiveJSON(liveHost + '/machine/connect?password=' + encodeURIComponent(livePassword));
-        if (connRes?.sessionKey) dsfSessionKey = connRes.sessionKey;
-        data = await fetchLiveJSON(liveHost + '/machine/status');
-      }
-    }
-    liveData = data;
-    if (!liveConnected) {
-      liveConnected = true;
-      document.getElementById('liveWarning').style.display = 'none';
-      setDSFIndicator('ok', 'Live: ' + (liveEndpoint === 'rr_model' ? 'RRF standalone' : 'DSF/SBC'));
-    }
-    if (liveMode) {
-      updateLiveTreeValues(data);
-      updateLiveDetailValues(data);
-    }
-  } catch (e) {
-    if (liveConnected) {
-      liveConnected = false;
-      if (liveMode) document.getElementById('liveWarning').style.display = '';
-      setDSFIndicator('error', 'Live: disconnected');
-    }
-  } finally {
-    if (livePollTimer !== null || liveEndpoint !== null) {
-      livePollTimer = setTimeout(livePoll, 250);
-    }
-  }
-}
-
-// ────────────────────────────────────────────────────────────
-// Live mode — mode switching
-// ────────────────────────────────────────────────────────────
-function switchMode(mode) {
-  liveMode = (mode === 'live');
-  document.getElementById('modeRef').classList.toggle('mode-active', !liveMode);
-  document.getElementById('modeLive').classList.toggle('mode-active', liveMode);
-
-  const refOnlyEls = document.querySelectorAll('#expandAllBtn, #collapseAllBtn, #searchBox, #searchClear, #refControls');
-  refOnlyEls.forEach(el => { el.style.display = liveMode ? 'none' : ''; });
-
-  if (liveMode) {
-    document.getElementById('liveWarning').style.display = liveConnected ? 'none' : '';
-    liveNavStack = [];
-    liveLastDetailPath = null;
-    liveLastDetailLabel = null;
-    liveValueCells.clear();
-    buildLiveTree(liveData);
-    showLiveDetail('', 'objectModel');
-  } else {
-    document.getElementById('liveWarning').style.display = 'none';
-    buildTree();
-    if (lastDetailKey) {
-      const detail = document.getElementById('detailPanel');
-      if (lastDetailType === 'class' && model.classes[lastDetailKey]) {
-        detail.innerHTML = renderClassDetail(model.classes[lastDetailKey]);
-      } else if (lastDetailType === 'enum' && model.enums[lastDetailKey]) {
-        detail.innerHTML = renderEnumDetail(model.enums[lastDetailKey]);
-      }
-      wireDetailLinks(detail);
-    }
-  }
-}
-
-document.getElementById('modeRef').addEventListener('click', () => { if (liveMode) switchMode('reference'); });
-document.getElementById('modeLive').addEventListener('click', () => { if (!liveMode && liveData) switchMode('live'); });
-document.getElementById('connectBtn').addEventListener('click', liveConnect);
-
-document.getElementById('saveForPrinterBtn').addEventListener('click', () => {
-  // Fetch this page's own source and offer it as a download.
-  // When served from the printer's www folder (http://printer.local/om-viewer.html)
-  // all fetch calls are same-origin so CORS/mixed-content is irrelevant.
-  fetch(location.href)
-    .then(r => r.text())
-    .then(html => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
-      a.download = 'om-viewer.html';
-      a.click();
-      URL.revokeObjectURL(a.href);
-    })
-    .catch(() => {
-      // Fallback: if fetch of own URL fails (e.g. file://), serialize the live DOM
-      const html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
-      a.download = 'om-viewer.html';
-      a.click();
-      URL.revokeObjectURL(a.href);
-    });
-});
-
-// ────────────────────────────────────────────────────────────
-// Live mode — value helpers
-// ────────────────────────────────────────────────────────────
-function getValueAtPath(obj, path) {
-  if (path === '' || path == null) return obj;
-  let cur = obj;
-  for (const p of path.split('.')) {
-    if (cur == null || typeof cur !== 'object') return undefined;
-    cur = cur[p];
-  }
-  return cur;
-}
-
-function formatLiveValue(val) {
-  if (val === undefined) return '—';
-  if (val === null) return 'null';
-  if (typeof val === 'boolean') return String(val);
-  if (typeof val === 'number') return String(val);
-  if (typeof val === 'string') return '"' + val + '"';
-  if (Array.isArray(val)) return '[' + val.length + ']';
-  return '{…}';
-}
-
-function liveValueClass(val) {
-  if (val === null || val === undefined) return 'is-null';
-  if (val === true) return 'is-bool-true';
-  if (val === false) return 'is-bool-false';
-  return '';
-}
-
-// ────────────────────────────────────────────────────────────
-// Live mode — in-place update
-// ────────────────────────────────────────────────────────────
-function updateLiveTreeValues(data) {
-  document.querySelectorAll('#treeScroll [data-lv]').forEach(el => {
-    const path = el.dataset.lv;
-    const val = getValueAtPath(data, path);
-    const text = formatLiveValue(val);
-    if (el.textContent !== text) {
-      el.textContent = text;
-      el.className = 'live-value ' + liveValueClass(val);
-      el.classList.add('live-updated');
-      el.addEventListener('animationend', () => el.classList.remove('live-updated'), { once: true });
-    }
-  });
-}
-
-function updateLiveDetailValues(data) {
-  liveValueCells.forEach((td, path) => {
-    const val = getValueAtPath(data, path);
-    const text = formatLiveValue(val);
-    if (td.textContent !== text) {
-      td.textContent = text;
-      td.className = 'val-col ' + liveValueClass(val);
-    }
-  });
-}
-
-// ────────────────────────────────────────────────────────────
-// Live mode — tree
-// ────────────────────────────────────────────────────────────
-function resolveLiveClass(path) {
-  if (!path) return model.classes['ObjectModel'] || null;
-  let cls = model.classes['ObjectModel'];
-  for (const seg of path.split('.')) {
-    if (!cls) return null;
-    if (/^\d+$/.test(seg)) continue; // array index — element type already resolved
-    const prop = (cls.props || []).find(p => p.name === seg);
-    if (!prop) return null;
-    const inner = resolveCollectionType(prop.type) || prop.type.replace(/\s*\|\s*null/g, '').trim();
-    cls = model.classes[inner] || null;
-  }
-  return cls;
-}
-
-function buildLiveTree(data) {
-  const scroll = document.getElementById('treeScroll');
-  scroll.innerHTML = '';
-  if (!data) {
-    scroll.innerHTML = '<div class="placeholder">No live data</div>';
-    return;
-  }
-
-  const frag = document.createDocumentFragment();
-  const rootNode = buildLiveNode(data, '', 'objectModel', 0);
-  if (rootNode) frag.appendChild(rootNode);
-  scroll.appendChild(frag);
-
-  // Auto-expand root
-  const rootChildren = rootNode?.querySelector('.tree-children');
-  const rootToggle = rootNode?.querySelector('.tree-toggle');
-  if (rootChildren && rootToggle) {
-    rootChildren.classList.remove('collapsed');
-    rootToggle.textContent = '▼';
-    rootChildren.dataset.populated = '1';
-    populateLiveChildren(data, '', 0, rootChildren);
-  }
-}
-
-function buildLiveNode(val, path, label, depth) {
-  const isObj = val !== null && typeof val === 'object' && !Array.isArray(val);
-  const isArr = Array.isArray(val);
-  if (!isObj && !isArr) return null; // primitives handled inline by parent
-
-  const node = document.createElement('div');
-  node.className = 'tree-node';
-  node.dataset.livePath = path;
-
-  const cls = resolveLiveClass(path);
-  const clsDesc = cls ? getClassDesc(cls.name) : null;
-
-  let badge = '', badgeCls = 'badge-class';
-  if (isArr) { badge = '[' + val.length + ']'; badgeCls = 'badge-collection'; }
-  else if (cls && cls.name !== label) { badge = cls.name; badgeCls = 'badge-class'; }
-
-  const { row, toggle } = makeTreeRow(depth, '▶', label, badge, badgeCls, clsDesc?.summary || null);
-  node.appendChild(row);
-  row.addEventListener('click', () => {
-    if (liveMode) showLiveDetail(path, label);
-  });
-
-  const children = document.createElement('div');
-  children.className = 'tree-children collapsed';
-  node.appendChild(children);
-
-  toggle.addEventListener('click', e => {
-    e.stopPropagation();
-    const collapsed = children.classList.toggle('collapsed');
-    toggle.textContent = collapsed ? '▶' : '▼';
-    if (!collapsed && !children.dataset.populated) {
-      children.dataset.populated = '1';
-      populateLiveChildren(val, path, depth, children);
-    }
-  });
-
-  return node;
-}
-
-function populateLiveChildren(val, path, depth, container) {
-  const entries = Array.isArray(val)
-    ? val.map((v, i) => ({ key: String(i), label: '[' + i + ']', value: v }))
-    : Object.entries(val).map(([k, v]) => ({ key: k, label: k, value: v }));
-
-  for (const { key, label, value } of entries) {
-    const childPath = path ? path + '.' + key : key;
-    const isObj = value !== null && typeof value === 'object';
-
-    if (isObj) {
-      const childNode = buildLiveNode(value, childPath, label, depth + 1);
-      if (childNode) container.appendChild(childNode);
-    } else {
-      // Leaf row
-      const node = document.createElement('div');
-      node.className = 'tree-node';
-      const row = document.createElement('div');
-      row.className = 'tree-row';
-
-      const indent = document.createElement('span');
-      indent.className = 'tree-indent';
-      indent.style.width = ((depth + 1) * 16) + 'px';
-      const spacer = document.createElement('span');
-      spacer.className = 'tree-toggle';
-      const nameSpan = document.createElement('span');
-      nameSpan.className = 'tree-name';
-      nameSpan.textContent = label;
-
-      const valSpan = document.createElement('span');
-      valSpan.className = 'live-value dim ' + liveValueClass(value);
-      valSpan.textContent = formatLiveValue(value);
-      valSpan.dataset.lv = childPath;
-
-      row.appendChild(indent);
-      row.appendChild(spacer);
-      row.appendChild(nameSpan);
-      row.appendChild(valSpan);
-      node.appendChild(row);
-
-      // Clicking a leaf selects its parent class in the detail panel
-      const parentPath = path;
-      row.addEventListener('click', () => { if (liveMode) showLiveDetail(parentPath, parentPath.split('.').pop() || 'objectModel'); });
-      container.appendChild(node);
-    }
-  }
-
-  if (container.children.length === 0) {
-    const empty = document.createElement('div');
-    empty.style.cssText = 'padding:4px 8px;font-size:12px;color:var(--text-dim)';
-    empty.textContent = '(empty)';
-    container.appendChild(empty);
-  }
-}
-
-// ────────────────────────────────────────────────────────────
-// Live mode — detail panel
-// ────────────────────────────────────────────────────────────
-function renderLiveBreadcrumb() {
-  if (!liveNavStack.length) return '';
-  const parts = liveNavStack.map((entry, i) =>
-    `<span class="bc-item" data-live-bc="${i}">${escHtml(entry.label)}</span>`
-  );
-  return `<div class="detail-breadcrumb">${parts.join('<span class="bc-sep">›</span>')}` +
-    `<span class="bc-sep">›</span><span class="bc-current">${escHtml(liveLastDetailLabel || '')}</span></div>`;
-}
-
-function showLiveDetail(path, label) {
-  liveLastDetailPath = path;
-  liveLastDetailLabel = label;
-  liveValueCells.clear();
-
-  const detail = document.getElementById('detailPanel');
-  const val = getValueAtPath(liveData, path);
-  const cls = resolveLiveClass(path);
-
-  if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
-    detail.innerHTML = renderLiveObjectDetail(val, path, cls);
-  } else if (Array.isArray(val)) {
-    detail.innerHTML = renderLiveArrayDetail(val, path, cls, label);
-  } else {
-    detail.innerHTML = `<div class="placeholder" style="margin-top:40px">Select an object in the tree to view details.</div>`;
-    return;
-  }
-
-  // Wire value cells
-  detail.querySelectorAll('[data-lvc]').forEach(td => {
-    liveValueCells.set(td.dataset.lvc, td);
-  });
-
-  // Wire drilldown rows
-  detail.querySelectorAll('tr.prop-row-drilldown[data-live-path]').forEach(row => {
-    row.addEventListener('click', () => {
-      const p = row.dataset.livePath;
-      const l = row.dataset.liveLabel;
-      liveNavStack.push({ path: liveLastDetailPath, label: liveLastDetailLabel });
-      showLiveDetail(p, l);
-    });
-  });
-
-  // Wire breadcrumb
-  detail.querySelectorAll('[data-live-bc]').forEach(el => {
-    el.addEventListener('click', () => {
-      const idx = parseInt(el.dataset.liveBc);
-      const entry = liveNavStack[idx];
-      if (!entry) return;
-      liveNavStack = liveNavStack.slice(0, idx);
-      showLiveDetail(entry.path, entry.label);
-    });
-  });
-}
-
-function navigateLiveDetail(path, label) {
-  liveNavStack.push({ path: liveLastDetailPath, label: liveLastDetailLabel });
-  showLiveDetail(path, label);
-}
-
-function renderLiveObjectDetail(val, path, cls) {
-  const clsDesc = cls ? getClassDesc(cls.name) : null;
-  const hasAnyDesc = cls ? (cls.props || []).some(p => getPropDesc(cls.name, p.name)) : false;
-
-  let html = renderLiveBreadcrumb();
-  html += `<h2>${escHtml(liveLastDetailLabel || path || 'objectModel')}</h2>`;
-
-  // OM path chips
-  if (cls) {
-    const paths = findPaths(cls.name);
-    if (paths.length) {
-      html += `<div class="om-path">` + paths.map(p => `<code class="om-path-code">${escHtml(p)}</code>`).join('') + `</div>`;
-    }
-  }
-
-  if (clsDesc?.summary) {
-    html += `<div class="class-description">${escHtml(clsDesc.summary)}`;
-    if (clsDesc.remarks) html += `<div class="remarks">${escHtml(clsDesc.remarks)}</div>`;
-    html += `</div>`;
-  }
-
-  // Build rows from live data keys, annotating with model info where available
-  const keys = Object.keys(val);
-  if (!keys.length) {
-    html += `<div style="color:var(--text-dim);font-size:13px;margin-top:16px">No properties.</div>`;
-    return html;
-  }
-
-  html += `<table class="prop-table"><thead><tr>
-    <th>Property</th><th>Type</th><th>Value</th>
-    ${hasAnyDesc ? '<th>Description</th>' : ''}
-  </tr></thead><tbody>`;
-
-  for (const key of keys) {
-    const childVal = val[key];
-    const childPath = path ? path + '.' + key : key;
-    const prop = cls ? (cls.props || []).find(p => p.name === key) : null;
-    const desc = prop && cls ? getPropDesc(cls.name, key) : null;
-
-    // Type display
-    let typeHtml = '';
-    if (prop) {
-      const inner = resolveCollectionType(prop.type);
-      const isCol = isCollectionType(prop.type);
-      const isDct = isDictType(prop.type);
-      const isEnum = !!model.enums[prop.type];
-      const isCls = !!model.classes[prop.type];
-      if (isCol && inner && (model.classes[inner] || model.enums[inner])) {
-        typeHtml = `<span class="prop-type">${escHtml(inner)}[]</span>`;
-      } else if (isDct && inner && model.classes[inner]) {
-        typeHtml = `<span class="prop-type">${escHtml(inner)}{}</span>`;
-      } else if (isCls || isEnum) {
-        typeHtml = `<span class="prop-type">${escHtml(prop.type)}</span>`;
-      } else {
-        typeHtml = `<span class="prop-type">${escHtml(shortType(prop.type))}</span>`;
-      }
-      if (prop.nullable) typeHtml += ` <span style="color:var(--text-dim);font-size:11px">or null</span>`;
-
-      // SBC badge
-      if (desc?.sbcProperty === false) {
-        typeHtml += ` <span class="tag tag-sbc-only" title="SBC only">SBC only</span>`;
-      } else if (desc?.sbcProperty === true) {
-        typeHtml += ` <span class="tag tag-sbc-also" title="SBC managed">SBC</span>`;
-      }
-    }
-
-    // Is this an object/array that can be drilled into?
-    const childIsObj = childVal !== null && typeof childVal === 'object';
-    const childCls = childIsObj && !Array.isArray(childVal) ? resolveLiveClass(childPath) : null;
-    const isDrillable = childIsObj;
-    const rowAttr = isDrillable
-      ? ` class="prop-row-drilldown" data-live-path="${escHtml(childPath)}" data-live-label="${escHtml(key)}"`
-      : '';
-    const chevron = isDrillable ? `<span class="prop-drilldown-chevron">›</span>` : '';
-
-    // Enum inline chips (reference mode style)
-    let enumInline = '';
-    if (prop && model.enums[prop.type] && !childIsObj) {
-      const en = model.enums[prop.type];
-      enumInline = `<div class="enum-inline">` +
-        en.members.map(m => {
-          const md = getEnumMemberDesc(en.name, m.key);
-          const active = (childVal === m.value || childVal === m.key) ? ' style="opacity:1;border-color:var(--green)"' : ' style="opacity:0.4"';
-          const tip = md?.summary ? ` title="${escHtml(md.summary)}"` : '';
-          return `<span class="enum-pip"${active}${tip}>${escHtml(m.key)}</span>`;
-        }).join('') + `</div>`;
-    }
-
-    // Value cell
-    const valText = formatLiveValue(childVal);
-    const valCls = 'val-col ' + liveValueClass(childVal);
-
-    // Description
-    let descHtml = '';
-    if (hasAnyDesc) {
-      descHtml = desc?.summary ? escHtml(desc.summary) : `<span style="color:var(--text-dim)">—</span>`;
-      if (desc?.remarks) descHtml += `<div class="remarks">${escHtml(desc.remarks)}</div>`;
-    }
-
-    html += `<tr${rowAttr}>
-      <td><span class="prop-name">${escHtml(key)}</span>${chevron}</td>
-      <td>${typeHtml}${enumInline}</td>
-      <td class="${escHtml(valCls)}" data-lvc="${escHtml(childPath)}">${escHtml(valText)}</td>
-      ${hasAnyDesc ? `<td class="prop-desc-cell">${descHtml}</td>` : ''}
-    </tr>`;
-  }
-
-  return html + '</tbody></table>';
-}
-
-function renderLiveArrayDetail(arr, path, cls, label) {
-  let html = renderLiveBreadcrumb();
-  html += `<h2>${escHtml(label)}</h2>`;
-  html += `<div style="color:var(--text-dim);font-size:13px;margin-bottom:12px">${arr.length} item${arr.length !== 1 ? 's' : ''}</div>`;
-
-  if (!arr.length) return html + `<div style="color:var(--text-dim);font-size:13px">Empty array.</div>`;
-
-  html += `<table class="prop-table"><thead><tr><th>Index</th><th>Value / Object</th></tr></thead><tbody>`;
-  arr.forEach((item, i) => {
-    const childPath = path + '.' + i;
-    const childIsObj = item !== null && typeof item === 'object';
-    const rowAttr = childIsObj
-      ? ` class="prop-row-drilldown" data-live-path="${escHtml(childPath)}" data-live-label="${escHtml('[' + i + ']')}"`
-      : '';
-    const chevron = childIsObj ? `<span class="prop-drilldown-chevron">›</span>` : '';
-    const valText = childIsObj ? (Array.isArray(item) ? '[' + item.length + ']' : '{…}') : formatLiveValue(item);
-    const valCls = childIsObj ? '' : 'val-col ' + liveValueClass(item);
-    html += `<tr${rowAttr}>
-      <td style="font-family:monospace;color:var(--text-dim)">[${i}]</td>
-      <td${childIsObj ? '' : ` class="${escHtml(valCls)}" data-lvc="${escHtml(childPath)}"`}>${escHtml(valText)}${chevron}</td>
-    </tr>`;
-  });
-
-  return html + '</tbody></table>';
-}
-
-// ────────────────────────────────────────────────────────────
-// Network scanner
-// ────────────────────────────────────────────────────────────
-
-// Probe a single IP. Tries /rr_connect (standalone) then /machine/noop (DSF).
-// Returns { ip, boardType, mode } or null if not a Duet.
-async function probeDuet(ip) {
-  const base = 'http://' + ip;
-  // Try standalone first — tiny response, includes boardType
-  try {
-    const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), 1500);
-    const r = await fetch(base + '/rr_connect?password=reprap', { signal: ctrl.signal });
-    clearTimeout(tid);
-    if (r.ok) {
-      const j = await r.json();
-      // Valid RRF response has err field; boardType present on newer firmware
-      if (typeof j.err === 'number') {
-        return { ip, boardType: j.boardType || 'Duet (standalone)', mode: 'standalone' };
-      }
-    }
-  } catch (_) {}
-
-  // Try DSF/SBC — /machine/connect returns sessionKey if it's a DSF board
-  try {
-    const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), 1500);
-    const r = await fetch(base + '/machine/connect?password=reprap', { signal: ctrl.signal });
-    clearTimeout(tid);
-    if (r.ok) {
-      const j = await r.json();
-      if (j?.sessionKey) return { ip, boardType: 'Duet (SBC/DSF)', mode: 'sbc' };
-    }
-  } catch (_) {}
-
-  return null;
-}
-
-// Get the local /24 subnet using WebRTC ICE candidate leak.
-// Falls back to null if blocked (Firefox with privacy.resistFingerprinting, etc.)
-function getLocalSubnet() {
-  return new Promise(resolve => {
-    try {
-      const pc = new RTCPeerConnection({ iceServers: [] });
-      pc.createDataChannel('');
-      const found = new Set();
-      const done = () => { pc.close(); resolve(found.size ? [...found][0] : null); };
-      const t = setTimeout(done, 1200);
-      pc.onicecandidate = e => {
-        if (!e.candidate) return;
-        const m = e.candidate.candidate.match(/(\d+\.\d+\.\d+)\.\d+/);
-        if (m && !m[1].startsWith('169.254') && m[1] !== '127.0.0') {
-          found.add(m[1]);
-          clearTimeout(t);
-          done();
-        }
-      };
-      pc.createOffer().then(o => pc.setLocalDescription(o));
-    } catch (_) { resolve(null); }
-  });
-}
-
-// Show a subnet input in the dropdown and return a Promise that resolves
-// when the user clicks Scan, or null if they close the dropdown.
-function askSubnet(defaultSubnet) {
-  const scanStatus = document.getElementById('scanStatus');
-  const scanResults = document.getElementById('scanResults');
-  scanStatus.textContent = 'Enter your subnet to scan:';
-  scanResults.innerHTML = `
-    <div style="padding:10px 12px;display:flex;gap:6px;align-items:center">
-      <input id="subnetInput" type="text" value="${escHtml(defaultSubnet)}"
-        style="flex:1;font-family:monospace" placeholder="192.168.1">
-      <span style="font-size:12px;color:var(--text-dim)">.0/24</span>
-      <button class="btn" id="subnetScanBtn" style="padding:5px 10px;font-size:12px">Go</button>
-    </div>`;
-  return new Promise(resolve => {
-    const input = document.getElementById('subnetInput');
-    const goBtn = document.getElementById('subnetScanBtn');
-    const go = e => { e.stopPropagation(); resolve(input.value.trim() || null); };
-    goBtn.addEventListener('click', go);
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.stopPropagation(); resolve(input.value.trim() || null); } });
-  });
-}
-
-let scanAbortFlag = false;
-let scanRunning = false;
-
-async function startScan(subnet) {
-  const btn = document.getElementById('scanBtn');
-  const dropdown = document.getElementById('scanDropdown');
-  const scanStatus = document.getElementById('scanStatus');
-  const scanResults = document.getElementById('scanResults');
-
-  scanRunning = true;
-  scanAbortFlag = false;
-  scanResults.innerHTML = '';
-  scanStatus.textContent = `Scanning ${subnet}.0/24…`;
-  btn.textContent = 'Stop';
-
-  // Build list of all 254 host IPs, scan in parallel batches of 30
-  const ips = Array.from({ length: 254 }, (_, i) => `${subnet}.${i + 1}`);
-  const BATCH = 30;
-  let found = 0;
-
-  for (let i = 0; i < ips.length; i += BATCH) {
-    if (scanAbortFlag) break;
-    const batch = ips.slice(i, i + BATCH);
-    const results = await Promise.all(batch.map(ip => probeDuet(ip)));
-    for (const res of results) {
-      if (!res) continue;
-      found++;
-      const item = document.createElement('div');
-      item.className = 'scan-result-item';
-      item.innerHTML = `
-        <span class="scan-result-board">${escHtml(res.boardType)}</span>
-        <span class="scan-result-ip">${escHtml(res.ip)}</span>
-        <span class="scan-result-mode">${res.mode === 'sbc' ? 'SBC / DSF' : 'Standalone RRF'}</span>`;
-      item.addEventListener('click', () => {
-        document.getElementById('hostInput').value = res.ip;
-        dropdown.style.display = 'none';
-        scanAbortFlag = true;
-        btn.textContent = 'Scan';
-        scanRunning = false;
-      });
-      scanResults.appendChild(item);
-    }
-    const done = Math.min(i + BATCH, ips.length);
-    scanStatus.textContent = `Scanning ${subnet}.0/24… (${done}/254)${found ? ` — ${found} found` : ''}`;
-  }
-
-  scanRunning = false;
-  if (!scanAbortFlag) {
-    scanStatus.textContent = found
-      ? `Found ${found} Duet device${found !== 1 ? 's' : ''} on ${subnet}.0/24`
-      : `No Duet devices found on ${subnet}.0/24`;
-    btn.textContent = 'Scan';
-  }
-}
-
-async function runScan() {
-  const btn = document.getElementById('scanBtn');
-  const dropdown = document.getElementById('scanDropdown');
-  const scanStatus = document.getElementById('scanStatus');
-  const scanResults = document.getElementById('scanResults');
-
-  // If a scan is running, stop it
-  if (scanRunning) {
-    scanAbortFlag = true;
-    scanRunning = false;
-    btn.textContent = 'Scan';
-    return;
-  }
-
-  // Toggle dropdown closed if already open (idle)
-  if (dropdown.style.display !== 'none') {
-    dropdown.style.display = 'none';
-    btn.textContent = 'Scan';
-    return;
-  }
-
-  dropdown.style.display = '';
-  scanResults.innerHTML = '';
-  scanStatus.textContent = 'Detecting local subnet…';
-
-  let subnet = await getLocalSubnet();
-  if (!subnet) {
-    // Guess a sensible default from the host input if it looks like an IP
-    const hostVal = document.getElementById('hostInput').value.trim();
-    const hostMatch = hostVal.match(/^(\d+\.\d+\.\d+)\.\d+$/);
-    subnet = await askSubnet(hostMatch ? hostMatch[1] : '192.168.1');
-    if (!subnet) { btn.textContent = 'Scan'; return; }
-  }
-
-  // Validate subnet format (x.x.x)
-  if (!/^\d+\.\d+\.\d+$/.test(subnet)) {
-    scanStatus.textContent = 'Invalid subnet — use format x.x.x (e.g. 192.168.1)';
-    btn.textContent = 'Scan';
-    return;
-  }
-
-  await startScan(subnet);
-}
-
-document.getElementById('scanBtn').addEventListener('click', runScan);
-
-// Close scan dropdown when clicking outside
-document.addEventListener('click', e => {
-  const dropdown = document.getElementById('scanDropdown');
-  if (dropdown.style.display === 'none') return;
-  if (!dropdown.contains(e.target) && e.target.id !== 'scanBtn') {
-    dropdown.style.display = 'none';
-    if (scanRunning) { scanAbortFlag = true; scanRunning = false; }
-    document.getElementById('scanBtn').textContent = 'Scan';
-  }
-});
+// (Live mode removed — see dwc-plugin/ for live value browsing)
 
 // ────────────────────────────────────────────────────────────
 // Init
 // ────────────────────────────────────────────────────────────
 (async () => {
   document.getElementById('viewerVersion').textContent = 'v' + VIEWER_VERSION;
-  if (location.protocol === 'https:') {
-    document.getElementById('httpsWarning').style.display = '';
-  }
-  const savedHost = localStorage.getItem('liveHost');
-  if (savedHost) document.getElementById('hostInput').value = savedHost;
-  const savedPassword = localStorage.getItem('livePassword');
-  if (savedPassword) document.getElementById('passwordInput').value = savedPassword;
   await loadBranches();
   const sel = document.getElementById('branchSelect');
   if (sel.value) {
