@@ -1285,71 +1285,30 @@ function buildSubclassMap() {
   return map;
 }
 
-// Return all ancestor class names of cls (including itself)
-function getAncestors(cls) {
-  const result = new Set();
-  let c = cls;
-  while (c) {
-    result.add(c.name);
-    c = c.parent ? model.classes[c.parent] : null;
-  }
-  return result;
-}
-
 // Walk the ObjectModel tree to find all dotted paths that lead to targetClass.
-// Handles polymorphic collections: sensors.filamentMonitors[] holds FilamentMonitor
-// (extends FilamentMonitorBase), and LaserFilamentMonitor also extends FilamentMonitorBase,
-// so LaserFilamentMonitor's properties are reachable from that path.
+// At every object/collection property, walks the declared type AND all its
+// transitive subclasses — this handles polymorphic collections like
+// sensors.filamentMonitors[] (declared as FilamentMonitor, but at runtime
+// can be LaserFilamentMonitor, PulsedFilamentMonitor, etc.).
 function findPaths(targetClassName) {
   const root = model.classes['ObjectModel'];
   if (!root) return [];
+  if (!model.classes[targetClassName]) return [];
 
   const subclassMap = buildSubclassMap();
   const results = new Set();
+  // visited: cls.name + path, to avoid infinite loops on shared/recursive types
   const visited = new Set();
-
-  const targetCls = model.classes[targetClassName];
-  if (!targetCls) return [];
-
-  // All names that are the target or have the target as a subclass
-  // (walking into them may surface the target via polymorphism)
-  const targetAncestors = getAncestors(targetCls); // e.g. [LaserFilamentMonitor, Duet3DFilamentMonitor, FilamentMonitorBase]
-
-  function couldReachTarget(clsName) {
-    // Direct match
-    if (clsName === targetClassName) return true;
-    // targetClassName is a subclass of clsName
-    if (subclassMap[clsName]?.has(targetClassName)) return true;
-    // clsName is an ancestor of targetClassName (shared base)
-    // — means we can walk into subclasses of clsName and find targetClassName
-    if (targetAncestors.has(clsName)) return true;
-    return false;
-  }
-
-  // All classes that are "compatible" with a given type at a path:
-  // the type itself + all its subclasses + all classes sharing a common ancestor
-  // For simplicity: walk the type itself AND any class whose ancestor set
-  // intersects with targetAncestors
-  function compatibleClasses(clsName) {
-    const result = new Set();
-    result.add(clsName);
-    // All subclasses of clsName
-    for (const s of subclassMap[clsName] || []) result.add(s);
-    // Any class that shares an ancestor with target (sibling branches)
-    for (const anc of targetAncestors) {
-      for (const s of subclassMap[anc] || []) result.add(s);
-      result.add(anc);
-    }
-    return result;
-  }
 
   function walk(cls, pathSoFar) {
     const key = cls.name + '|' + pathSoFar;
     if (visited.has(key)) return;
     visited.add(key);
 
+    // If we've arrived at the target, record the path
     if (cls.name === targetClassName && pathSoFar) {
       results.add(pathSoFar);
+      return; // no need to recurse into target's own props
     }
 
     for (const prop of cls.props || []) {
@@ -1358,19 +1317,18 @@ function findPaths(targetClassName) {
       const isDct = isDictType(prop.type);
       const resolvedType = (inner || prop.type).replace(/\s*\|\s*null/g, '').trim();
 
+      if (!model.classes[resolvedType]) continue;
+
       const suffix = isCol ? '[]' : isDct ? '{}' : '';
       const segment = pathSoFar ? pathSoFar + '.' + prop.name + suffix : prop.name + suffix;
 
-      if (resolvedType === targetClassName) {
-        results.add(segment);
-      }
+      // Walk the declared type itself
+      walk(model.classes[resolvedType], segment);
 
-      if (model.classes[resolvedType] && couldReachTarget(resolvedType)) {
-        // Walk the resolved type and all compatible siblings/subclasses
-        for (const cname of compatibleClasses(resolvedType)) {
-          const c = model.classes[cname];
-          if (c) walk(c, segment);
-        }
+      // Walk every transitive subclass of the declared type (polymorphism)
+      for (const subName of subclassMap[resolvedType] || []) {
+        const subCls = model.classes[subName];
+        if (subCls) walk(subCls, segment);
       }
     }
   }
@@ -1405,13 +1363,6 @@ function renderClassDetail(cls) {
 
   // Object model path breadcrumb
   const paths = findPaths(cls.name);
-  const sm = buildSubclassMap();
-  console.log('findPaths(' + cls.name + '):', paths);
-  console.log('  FilamentMonitorBase subclasses:', [...(sm['FilamentMonitorBase']||[])]);
-  console.log('  FilamentMonitor subclasses:', [...(sm['FilamentMonitor']||[])]);
-  console.log('  LaserFilamentMonitor parent:', model.classes['LaserFilamentMonitor']?.parent);
-  console.log('  FilamentMonitor parent:', model.classes['FilamentMonitor']?.parent);
-  console.log('  Duet3DFilamentMonitor parent:', model.classes['Duet3DFilamentMonitor']?.parent);
   if (paths.length > 0) {
     html += `<div class="om-path">`;
     html += paths.map(p => `<code class="om-path-code">${escHtml(p)}</code>`).join('');
