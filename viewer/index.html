@@ -900,6 +900,55 @@ function isDictType(t) {
 }
 
 // ────────────────────────────────────────────────────────────
+// Cache helpers (localStorage)
+// Cache key: "om_cache_v1_<omSha>_<dsfSha>"
+// Each entry: { omSha, dsfSha, dsfRef, model, descriptions, dsfLabel }
+// We evict all entries that don't match the current key on write,
+// keeping localStorage from growing unboundedly.
+// ────────────────────────────────────────────────────────────
+const CACHE_VERSION = 'om_v1';
+
+function cacheKey(omSha, dsfSha) {
+  return `${CACHE_VERSION}_${omSha}_${dsfSha || 'none'}`;
+}
+
+function cacheSave(omSha, dsfSha, dsfRef, modelData, descsData, dsfLabel) {
+  // Evict all old entries for this cache version
+  const prefix = CACHE_VERSION + '_';
+  const toRemove = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(prefix)) toRemove.push(k);
+  }
+  toRemove.forEach(k => localStorage.removeItem(k));
+
+  const key = cacheKey(omSha, dsfSha);
+  try {
+    localStorage.setItem(key, JSON.stringify({ omSha, dsfSha, dsfRef, model: modelData, descriptions: descsData, dsfLabel }));
+    console.log('[cache] saved', key);
+  } catch (e) {
+    // localStorage quota exceeded — not fatal
+    console.warn('[cache] save failed (quota?):', e.message);
+  }
+}
+
+function cacheLoad(omSha, dsfSha) {
+  const key = cacheKey(omSha, dsfSha);
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+
+async function getCommitSha(repo, ref) {
+  const data = await fetchJSON(`https://api.github.com/repos/${repo}/commits/${encodeURIComponent(ref)}?per_page=1`);
+  return data.sha;
+}
+
+// ────────────────────────────────────────────────────────────
 // Load & parse
 // ────────────────────────────────────────────────────────────
 async function loadModel(ref) {
@@ -907,6 +956,46 @@ async function loadModel(ref) {
   descriptions = {};
   lastDetailType = null;
   lastDetailKey = null;
+
+  // ── Resolve SHAs for cache key ──
+  loading(true, 'Checking for updates…');
+  let omSha = null, dsfRef = null, dsfSha = null;
+  try {
+    omSha = await getCommitSha(OM_REPO, ref);
+  } catch (e) {
+    console.warn('[cache] could not resolve OM SHA:', e.message);
+  }
+
+  setDSFIndicator('none', 'DSF descriptions: searching…');
+  try {
+    dsfRef = await findDSFRef(ref);
+    if (dsfRef) dsfSha = await getCommitSha(DSF_REPO, dsfRef);
+  } catch (e) {
+    console.warn('[cache] could not resolve DSF SHA:', e.message);
+  }
+
+  // ── Try cache hit ──
+  if (omSha) {
+    const cached = cacheLoad(omSha, dsfSha);
+    if (cached) {
+      loading(true, 'Loading from cache…');
+      await tick();
+      model = cached.model;
+      descriptions = cached.descriptions || {};
+      // Re-wire parentRef (not serialisable as circular, rebuild it)
+      for (const cls of Object.values(model.classes)) {
+        if (cls.parent && cls.parent !== 'ModelObject' && model.classes[cls.parent])
+          cls.parentRef = model.classes[cls.parent];
+      }
+      if (cached.dsfLabel) setDSFIndicator('ok', cached.dsfLabel);
+      else setDSFIndicator('none', 'DSF descriptions: no matching branch');
+      loading(false);
+      console.log('[cache] hit — skipped network fetch');
+      return;
+    }
+  }
+
+  // ── Cache miss: fetch and parse everything ──
 
   // ── Load TypeScript ObjectModel ──
   loading(true, 'Fetching OM file list...');
@@ -941,17 +1030,7 @@ async function loadModel(ref) {
   }
 
   // ── Load DSF descriptions ──
-  loading(true, 'Finding matching DSF branch...');
-  await tick();
-
-  setDSFIndicator('none', 'DSF descriptions: searching…');
-  let dsfRef = null;
-  try {
-    dsfRef = await findDSFRef(ref);
-  } catch (e) {
-    console.warn('DSF ref lookup failed:', e);
-  }
-
+  let dsfLabel = null;
   if (dsfRef) {
     try {
       loading(true, `Loading DSF descriptions (${dsfRef})...`);
@@ -980,13 +1059,26 @@ async function loadModel(ref) {
       }
 
       const descCount = Object.keys(descriptions).length;
-      setDSFIndicator('ok', `DSF descriptions: ${dsfRef} (${descCount} types)`);
+      dsfLabel = `DSF descriptions: ${dsfRef} (${descCount} types)`;
+      setDSFIndicator('ok', dsfLabel);
     } catch (e) {
       console.warn('DSF load failed:', e);
       setDSFIndicator('error', 'DSF descriptions: failed');
     }
   } else {
     setDSFIndicator('none', 'DSF descriptions: no matching branch');
+  }
+
+  // ── Save to cache (strip parentRef to avoid circular JSON) ──
+  if (omSha) {
+    const modelForCache = {
+      classes: Object.fromEntries(Object.entries(model.classes).map(([k, v]) => {
+        const { parentRef, ...rest } = v;
+        return [k, rest];
+      })),
+      enums: model.enums
+    };
+    cacheSave(omSha, dsfSha, dsfRef, modelForCache, descriptions, dsfLabel);
   }
 
   loading(false);
@@ -1026,6 +1118,7 @@ function buildTree() {
   if (rootToggle && rootChildren) {
     rootChildren.classList.remove('collapsed');
     rootToggle.textContent = '▼';
+    rootChildren.dataset.populated = '1';
     populateClassChildren(root, 0, rootChildren);
   }
 
@@ -1038,6 +1131,8 @@ function buildTree() {
     } else if (lastDetailType === 'enum' && model.enums[lastDetailKey]) {
       detail.innerHTML = renderEnumDetail(model.enums[lastDetailKey]);
     }
+    // Auto-expand the tree to the selected item
+    if (lastDetailType === 'class') navigateTreeToClass(lastDetailKey);
   }
 
   updateControls(true);
@@ -1102,12 +1197,14 @@ function buildClassNode(cls, depth, propName) {
   children.className = 'tree-children collapsed';
   node.appendChild(children);
 
-  let populated = false;
   toggle.addEventListener('click', e => {
     e.stopPropagation();
     const collapsed = children.classList.toggle('collapsed');
     toggle.textContent = collapsed ? '▶' : '▼';
-    if (!collapsed && !populated) { populated = true; populateClassChildren(cls, depth, children); }
+    if (!collapsed && !children.dataset.populated) {
+      children.dataset.populated = '1';
+      populateClassChildren(cls, depth, children);
+    }
   });
   row.addEventListener('click', () => selectNode(row, 'class', cls.name));
   return node;
@@ -1141,12 +1238,14 @@ function populateClassChildren(cls, depth, container) {
       subChildren.className = 'tree-children collapsed';
       node.appendChild(subChildren);
 
-      let populated = false;
       toggle.addEventListener('click', e => {
         e.stopPropagation();
         const collapsed = subChildren.classList.toggle('collapsed');
         toggle.textContent = collapsed ? '▶' : '▼';
-        if (!collapsed && !populated) { populated = true; populateClassChildren(childClass, depth + 1, subChildren); }
+        if (!collapsed && !subChildren.dataset.populated) {
+          subChildren.dataset.populated = '1';
+          populateClassChildren(childClass, depth + 1, subChildren);
+        }
       });
       row.addEventListener('click', () => selectNode(row, 'class', childClass.name));
       container.appendChild(node);
@@ -1283,6 +1382,102 @@ function buildSubclassMap() {
   }
   for (const name of Object.keys(direct)) getAll(name);
   return map;
+}
+
+// Navigate the tree DOM to the given class, expanding nodes along the way.
+// Uses findPaths to determine the path, then walks the DOM level by level.
+function navigateTreeToClass(targetClassName) {
+  if (!model.classes[targetClassName]) return;
+
+  // If this is ObjectModel itself, just highlight the root row
+  if (targetClassName === 'ObjectModel') {
+    const rootRow = document.querySelector('#treeScroll .tree-row');
+    if (rootRow) {
+      if (selectedNode) selectedNode.classList.remove('selected');
+      rootRow.classList.add('selected');
+      selectedNode = rootRow;
+      rootRow.scrollIntoView({ block: 'nearest' });
+    }
+    return;
+  }
+
+  // Get the path from findPaths — use the shortest one
+  const paths = findPaths(targetClassName);
+  if (!paths.length) return;
+  const shortestPath = paths.reduce((a, b) => a.split('.').length <= b.split('.').length ? a : b);
+
+  // Parse path into segments, stripping [] and {} suffixes
+  // e.g. "sensors.filamentMonitors[]" → ["sensors", "filamentMonitors"]
+  const segments = shortestPath.split('.').map(s => s.replace(/[\[\]{}]+$/, ''));
+
+  // Walk the tree DOM: start at the root node's children container
+  const scroll = document.getElementById('treeScroll');
+  const rootNode = scroll.querySelector('.tree-node');
+  if (!rootNode) return;
+
+  // Ensure root children are expanded and populated (already done in buildTree, but just in case)
+  const rootChildren = rootNode.querySelector('.tree-children');
+  const rootToggle = rootNode.querySelector('.tree-toggle');
+  if (!rootChildren) return;
+  if (rootChildren.classList.contains('collapsed')) {
+    rootChildren.classList.remove('collapsed');
+    if (rootToggle) rootToggle.textContent = '▼';
+    if (!rootChildren.dataset.populated) {
+      rootChildren.dataset.populated = '1';
+      const rootCls = model.classes['ObjectModel'];
+      if (rootCls) populateClassChildren(rootCls, 0, rootChildren);
+    }
+  }
+
+  // Walk through segments, expanding the matching child node at each level
+  let currentContainer = rootChildren;
+  let currentDepth = 0;
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const isLast = i === segments.length - 1;
+
+    // Find the child node whose row label matches this segment
+    const childNodes = currentContainer.querySelectorAll(':scope > .tree-node');
+    let found = null;
+    for (const node of childNodes) {
+      const nameSpan = node.querySelector('.tree-name');
+      if (nameSpan && nameSpan.textContent === seg) {
+        found = node;
+        break;
+      }
+    }
+    if (!found) break;
+
+    const row = found.querySelector(':scope > .tree-row');
+    const childContainer = found.querySelector(':scope > .tree-children');
+    const toggle = row?.querySelector('.tree-toggle');
+
+    if (isLast) {
+      // Highlight this row as selected
+      if (row) {
+        if (selectedNode) selectedNode.classList.remove('selected');
+        row.classList.add('selected');
+        selectedNode = row;
+        row.scrollIntoView({ block: 'nearest' });
+      }
+    } else {
+      // Expand this node and populate its children if needed
+      if (childContainer) {
+        if (childContainer.classList.contains('collapsed')) {
+          childContainer.classList.remove('collapsed');
+          if (toggle) toggle.textContent = '▼';
+        }
+        if (!childContainer.dataset.populated) {
+          childContainer.dataset.populated = '1';
+          const nodeCls = model.classes[found.dataset.name];
+          if (nodeCls) populateClassChildren(nodeCls, currentDepth + 1, childContainer);
+        }
+      }
+      currentContainer = childContainer || currentContainer;
+      currentDepth++;
+    }
+  }
 }
 
 // Walk the ObjectModel tree to find all dotted paths that lead to targetClass.
