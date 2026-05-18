@@ -259,6 +259,23 @@
     align-items: center;
   }
 
+  .om-path {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .om-path-code {
+    font-family: monospace;
+    font-size: 13px;
+    color: var(--yellow);
+    background: rgba(249,226,175,0.1);
+    border: 1px solid rgba(249,226,175,0.2);
+    border-radius: 4px;
+    padding: 2px 8px;
+    user-select: all;
+  }
+
   .class-description {
     font-size: 13px;
     color: var(--text);
@@ -1219,6 +1236,45 @@ function selectNode(rowEl, type, key) {
   wireDetailLinks(detail);
 }
 
+// Walk the ObjectModel tree to find all dotted paths that lead to targetClass.
+// Returns an array of path strings like ["move.extruders[]", "move.axes[]"]
+function findPaths(targetClassName) {
+  const root = model.classes['ObjectModel'];
+  if (!root) return [];
+
+  const results = [];
+  const visited = new Set(); // prevent infinite loops from shared types
+
+  function walk(cls, pathSoFar) {
+    if (visited.has(cls.name + '|' + pathSoFar)) return;
+    visited.add(cls.name + '|' + pathSoFar);
+
+    for (const prop of cls.props || []) {
+      const inner = resolveCollectionType(prop.type);
+      const isCol = isCollectionType(prop.type);
+      const isDct = isDictType(prop.type);
+      const resolvedType = inner || prop.type.replace(/\s*\|\s*null/g, '');
+
+      const suffix = isCol ? '[]' : isDct ? '{}' : '';
+      const segment = pathSoFar ? pathSoFar + '.' + prop.name + suffix : prop.name + suffix;
+
+      if (resolvedType === targetClassName) {
+        results.push(segment);
+      }
+
+      const childCls = model.classes[resolvedType];
+      if (childCls && resolvedType !== cls.name) {
+        walk(childCls, segment);
+      }
+    }
+  }
+
+  // Start from the root — root itself is "objectModel" but M409 paths start from the top-level keys
+  // So we walk root's props with empty prefix
+  walk(root, '');
+  return results;
+}
+
 function wireDetailLinks(detail) {
   detail.querySelectorAll('[data-goto]').forEach(el => {
     el.addEventListener('click', () => {
@@ -1239,6 +1295,14 @@ function renderClassDetail(cls) {
   const hasAnyDesc = allProps.some(p => getPropDesc(cls.name, p.name));
 
   let html = `<h2>${escHtml(cls.name)}</h2>`;
+
+  // Object model path breadcrumb
+  const paths = findPaths(cls.name);
+  if (paths.length > 0) {
+    html += `<div class="om-path">`;
+    html += paths.map(p => `<code class="om-path-code">${escHtml(p)}</code>`).join('');
+    html += `</div>`;
+  }
 
   if (clsDesc?.summary) {
     html += `<div class="class-description">${escHtml(clsDesc.summary)}`;
