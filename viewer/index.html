@@ -1236,43 +1236,106 @@ function selectNode(rowEl, type, key) {
   wireDetailLinks(detail);
 }
 
+// Build a map of className -> all subclass names (direct and transitive)
+function buildSubclassMap() {
+  const map = {}; // parentName -> Set of subclass names
+  for (const cls of Object.values(model.classes)) {
+    if (cls.parent) {
+      if (!map[cls.parent]) map[cls.parent] = new Set();
+      map[cls.parent].add(cls.name);
+    }
+  }
+  // Expand transitively
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [parent, children] of Object.entries(map)) {
+      for (const child of [...children]) {
+        if (map[child]) {
+          for (const grandchild of map[child]) {
+            if (!children.has(grandchild)) {
+              children.add(grandchild);
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+  }
+  return map;
+}
+
 // Walk the ObjectModel tree to find all dotted paths that lead to targetClass.
-// Returns an array of path strings like ["move.extruders[]", "move.axes[]"]
+// Follows inheritance: if a property holds FilamentMonitorBase and LaserFilamentMonitor
+// extends it, LaserFilamentMonitor's own properties are reachable from that path too.
+// Returns path strings like ["move.extruders[]", "sensors.filamentMonitors[].configured"]
 function findPaths(targetClassName) {
   const root = model.classes['ObjectModel'];
   if (!root) return [];
 
-  const results = [];
-  const visited = new Set(); // prevent infinite loops from shared types
+  const subclassMap = buildSubclassMap();
+  const results = new Set();
+  const visited = new Set();
+
+  // Returns true if clsName === targetClassName or targetClassName is a subclass of clsName
+  function typeCoversTarget(clsName) {
+    if (clsName === targetClassName) return true;
+    return subclassMap[clsName]?.has(targetClassName) || false;
+  }
+
+  // All class names that are the target or a superclass of the target
+  // (i.e. walking into them might eventually reach targetClassName's own props)
+  function couldContainTarget(clsName) {
+    if (clsName === targetClassName) return true;
+    // Is targetClassName a subclass of clsName?
+    return subclassMap[clsName]?.has(targetClassName) || false;
+  }
 
   function walk(cls, pathSoFar) {
-    if (visited.has(cls.name + '|' + pathSoFar)) return;
-    visited.add(cls.name + '|' + pathSoFar);
+    const key = cls.name + '|' + pathSoFar;
+    if (visited.has(key)) return;
+    visited.add(key);
+
+    // If this class IS the target (arrived here via a parent type), record the path
+    if (cls.name === targetClassName && pathSoFar) {
+      results.add(pathSoFar);
+    }
 
     for (const prop of cls.props || []) {
       const inner = resolveCollectionType(prop.type);
       const isCol = isCollectionType(prop.type);
       const isDct = isDictType(prop.type);
-      const resolvedType = inner || prop.type.replace(/\s*\|\s*null/g, '');
+      const resolvedType = (inner || prop.type).replace(/\s*\|\s*null/g, '').trim();
 
       const suffix = isCol ? '[]' : isDct ? '{}' : '';
       const segment = pathSoFar ? pathSoFar + '.' + prop.name + suffix : prop.name + suffix;
 
       if (resolvedType === targetClassName) {
-        results.push(segment);
+        results.add(segment);
+        // Still recurse in case target has subprops also being searched
       }
 
       const childCls = model.classes[resolvedType];
-      if (childCls && resolvedType !== cls.name) {
-        walk(childCls, segment);
+      if (childCls) {
+        // Walk the child class itself
+        if (couldContainTarget(resolvedType)) {
+          walk(childCls, segment);
+        }
+        // Also walk all subclasses of this type — polymorphic collections
+        if (subclassMap[resolvedType]) {
+          for (const subName of subclassMap[resolvedType]) {
+            const subCls = model.classes[subName];
+            if (subCls && couldContainTarget(subName)) {
+              walk(subCls, segment);
+            }
+          }
+        }
       }
     }
   }
 
-  // Start from the root — root itself is "objectModel" but M409 paths start from the top-level keys
-  // So we walk root's props with empty prefix
   walk(root, '');
-  return results;
+  return [...results].sort();
 }
 
 function wireDetailLinks(detail) {
