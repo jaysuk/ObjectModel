@@ -575,7 +575,7 @@
 // ────────────────────────────────────────────────────────────
 // Constants
 // ────────────────────────────────────────────────────────────
-const VIEWER_VERSION = '1.4.1';
+const VIEWER_VERSION = '1.4.2';
 const OM_REPO   = 'Duet3D/ObjectModel';
 const DSF_REPO  = 'Duet3D/DuetSoftwareFramework';
 const OM_RAW    = 'https://raw.githubusercontent.com/' + OM_REPO;
@@ -2119,27 +2119,49 @@ async function fetchLiveJSON(url, extraHeaders = {}) {
   }
 }
 
-// RRF's rr_model response is size-limited. Fetch each top-level section
-// individually using key=<name> to ensure full depth on all of them.
-// We use flags=d99fn (deep, frequent, include nulls) — the 'v' (verbose)
-// flag is not supported on all firmware versions and returns 503.
-async function fetchFullRRModel() {
-  // Step 1: get root-level key list via a shallow fetch
-  const rootRes = await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn');
-  if (!rootRes?.result) return null;
-  let combined = rootRes.result;
-  const topKeys = Object.keys(combined);
-  console.log('[live] rr_model top-level keys:', topKeys);
+// Query a single rr_model key, handling array pagination via the `next` field.
+// flags=d99vno: depth 99, include key names, include nulls, omit field metadata.
+// When response.next > 0, RRF has more array elements — re-fetch with a{next} suffix.
+async function queryModelKey(key, forceArray = false) {
+  let result = null;
+  let next = 0;
+  do {
+    const flags = 'd99vno' + (next !== 0 || forceArray ? 'a' + next : '');
+    const url = liveHost + '/rr_model?key=' + encodeURIComponent(key) + '&flags=' + flags;
+    const res = await fetchLiveJSON(url);
+    next = res.next || 0;
+    if (result === null || !Array.isArray(result)) {
+      result = res.result;
+    } else {
+      result = result.concat(res.result);
+    }
+  } while (next !== 0);
+  return result;
+}
 
-  // Step 2: fetch each top-level section individually to ensure full depth
-  for (const key of topKeys) {
+// Fetch the complete object model by querying each top-level key individually
+// (mirroring the DWC PollConnector approach). This avoids the response size cap
+// that causes partial results when fetching the whole model in one request.
+async function fetchFullRRModel() {
+  // Get seqs first — tells us which keys exist and their current sequence numbers
+  const seqsRes = await fetchLiveJSON(liveHost + '/rr_model?key=seqs');
+  const topKeys = seqsRes?.result ? Object.keys(seqsRes.result).filter(k => k !== 'reply') : null;
+
+  // Fall back to a root fetch to discover keys if seqs isn't available
+  const keyList = topKeys || Object.keys((await fetchLiveJSON(liveHost + '/rr_model?flags=d99fn'))?.result || {});
+  console.log('[live] model keys to fetch:', keyList);
+
+  const combined = {};
+  for (const key of keyList) {
     try {
-      const res = await fetchLiveJSON(liveHost + '/rr_model?key=' + key + '&flags=d99fn');
-      if (res?.result !== undefined) {
-        combined[key] = res.result;
+      // move.axes can be a long array — force array pagination
+      combined[key] = await queryModelKey(key, key === 'move');
+      // If move, also individually fetch axes to ensure full pagination
+      if (key === 'move' && combined.move?.axes !== undefined) {
+        combined.move.axes = await queryModelKey('move.axes', true);
       }
     } catch (e) {
-      console.warn('[live] rr_model key=' + key + ' failed:', e.message);
+      console.warn('[live] failed to fetch key=' + key + ':', e.message);
     }
   }
   return combined;
