@@ -283,7 +283,11 @@ function buildFlatRows (liveModel, rootObj, rootPath, omModel, descriptions, ope
     : Object.entries(rootObj).sort((a, b) => (a[0] < b[0] ? -1 : 1))
 
   for (const [key, val] of entries) {
-    const path = rootPath ? rootPath + '.' + key : String(key)
+    // Use bracket notation for numeric keys (array indices) to match buildLiveRows
+    const isIndex = /^\d+$/.test(key)
+    const path = rootPath
+      ? (isIndex ? rootPath + '[' + key + ']' : rootPath + '.' + key)
+      : String(key)
     const drillable = val !== null && typeof val === 'object'
     const cls = omModel.classes[typeName]
     const tsProp = cls ? (cls.props || []).find(p => p.name === key) : null
