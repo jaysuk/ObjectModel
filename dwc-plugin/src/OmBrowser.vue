@@ -33,7 +33,7 @@
           <div v-if="!searchMatches.length" class="pa-3 grey--text caption">No results</div>
           <div
             v-for="g in searchMatches" :key="g.clsName"
-            :class="['tree-row', { 'tree-row--selected': selectedNode === g.clsName }]"
+            :class="['tree-row', { 'tree-row--selected': treeHighlight === g.clsName }]"
             style="padding-left:8px"
             @click="selectSearchResult(g.clsName)"
           >
@@ -46,7 +46,7 @@
           <div
             v-for="row in treeRows"
             :key="row.id"
-            :class="['tree-row', { 'tree-row--selected': selectedNode === row.id }]"
+            :class="['tree-row', { 'tree-row--selected': treeHighlight === row.id }]"
             :style="{ paddingLeft: (8 + row.depth * 16) + 'px' }"
             @click="selectRow(row)"
           >
@@ -326,6 +326,7 @@ export default {
       treeVersion: 0,
 
       selectedNode: null,
+      treeHighlight: null,
       detailMode: null,
 
       copiedSnackbar: false,
@@ -478,40 +479,36 @@ export default {
 
     refresh () { this.treeVersion++ },
 
+    // Tree chevron click: expand/collapse node AND focus it in the detail panel
     toggleNode (row) {
       this.$set(this.openNodes, row.id, !this.openNodes[row.id])
-      // Also focus this node in the detail panel
       if (row.isLive) {
-        if (this.selectedNode !== row.id) { this.openPaths = {}; this.selectedNode = row.id }
+        this.openPaths = {}
+        this.selectedNode = row.id
+        this.treeHighlight = row.id
         this.detailMode = 'live'
       }
     },
 
+    // Detail row expand/collapse: keep the detail panel as-is but mirror to the tree
     togglePath (path) {
       this.$set(this.openPaths, path, !this.openPaths[path])
-      // Sync tree: expand to show this path in the tree and select it
       if (this.hasLiveModel) {
-        this.expandTreeTo(path)
+        this.syncTreeToPath(path)
       }
     },
 
-    // Expand the tree to show a given live path, select it, and scroll it into view
-    expandTreeTo (path) {
-      // Expand each ancestor segment so the path is visible in the tree
-      const normalised = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)
+    // Expand tree ancestors for a given path and highlight the row — without changing the detail panel
+    syncTreeToPath (path) {
+      // Open every ancestor so the target row is visible
+      const segs = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)
       const parts = []
-      for (const seg of normalised) {
+      for (const seg of segs) {
         parts.push(seg)
         const id = parts.join('.').replace(/\.(\d+)(?=\.|$)/g, '[$1]')
         if (!this.openNodes[id]) this.$set(this.openNodes, id, true)
       }
-      // Select the path so the tree highlights it and the detail panel shows it
-      if (this.selectedNode !== path) {
-        this.openPaths = { [path]: this.openPaths[path] }
-        this.selectedNode = path
-        this.detailMode = 'live'
-      }
-      // Scroll the highlighted tree row into view
+      this.treeHighlight = path
       this.$nextTick(() => {
         const panel = this.$refs.treePanel
         if (!panel) return
@@ -549,16 +546,18 @@ export default {
         const val = resolvePath(this.liveModel, row.id)
         const isObj = val !== null && typeof val === 'object'
         const newId = isObj ? row.id : (() => {
-          // leaf — show parent object
           const parts = row.id.replace(/\[\d+\]$/, '').split('.')
           if (parts.length > 1) parts.pop()
           return parts.join('.')
         })()
-        if (this.selectedNode !== newId) { this.openPaths = {}; this.selectedNode = newId }
+        if (this.selectedNode !== newId) { this.openPaths = {} }
+        this.selectedNode = newId
+        this.treeHighlight = row.id
         this.detailMode = 'live'
       } else {
         if (this.selectedNode !== row.className) { this.openPaths = {} }
         this.selectedNode = row.className
+        this.treeHighlight = row.id
         this.detailMode = 'ref'
       }
     },
@@ -566,6 +565,7 @@ export default {
     selectSearchResult (clsName) {
       this.openPaths = {}
       this.selectedNode = clsName
+      this.treeHighlight = clsName
       this.detailMode = 'ref'
     },
 
