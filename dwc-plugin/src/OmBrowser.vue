@@ -492,21 +492,12 @@ export default {
       const opening = !this.openNodes[row.id]
       this.$set(this.openNodes, row.id, opening)
       if (row.isLive) {
-        if (opening) {
-          // Expanding: show this node in detail; only reset openPaths if navigating away
-          if (this.selectedNode !== row.id) this.openPaths = {}
-          this.selectedNode = row.id
-          this.treeHighlight = row.id
-          this.detailMode = 'live'
-        } else {
-          // Collapsing: navigate detail up to parent
-          const parent = this.parentPath(row.id)
-          const newSel = parent || row.id
-          if (this.selectedNode !== newSel) this.openPaths = {}
-          this.selectedNode = newSel
-          this.treeHighlight = newSel
-          this.detailMode = 'live'
-        }
+        const newSel = opening ? row.id : (this.parentPath(row.id) || row.id)
+        // Clear openPaths entries that don't belong under the new selected node
+        this.pruneOpenPaths(newSel)
+        this.selectedNode = newSel
+        this.treeHighlight = opening ? row.id : newSel
+        this.detailMode = 'live'
       }
     },
 
@@ -525,6 +516,18 @@ export default {
           this.scrollTreeHighlight()
         }
       }
+    },
+
+    // Remove openPaths entries that aren't under the given root path
+    pruneOpenPaths (root) {
+      const prefix = root ? root + '.' : ''
+      const pruned = {}
+      for (const [k, v] of Object.entries(this.openPaths)) {
+        if (v && (k === root || k.startsWith(prefix) || (root && root.startsWith(k)))) {
+          pruned[k] = v
+        }
+      }
+      this.openPaths = pruned
     },
 
     // Expand tree ancestors and the target itself, highlight it — without changing the detail panel
