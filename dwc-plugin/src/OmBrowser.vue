@@ -479,14 +479,34 @@ export default {
 
     refresh () { this.treeVersion++ },
 
-    // Tree chevron click: expand/collapse node AND focus it in the detail panel
+    // Returns the parent path of a live path, e.g. boards[0].drivers → boards[0], boards[0] → boards
+    parentPath (path) {
+      const segs = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)
+      if (segs.length <= 1) return null
+      segs.pop()
+      return segs.join('.').replace(/\.(\d+)(?=\.|$)/g, '[$1]')
+    },
+
+    // Tree chevron click: expand/collapse node and sync the detail panel
     toggleNode (row) {
-      this.$set(this.openNodes, row.id, !this.openNodes[row.id])
+      const opening = !this.openNodes[row.id]
+      this.$set(this.openNodes, row.id, opening)
       if (row.isLive) {
-        this.openPaths = {}
-        this.selectedNode = row.id
-        this.treeHighlight = row.id
-        this.detailMode = 'live'
+        if (opening) {
+          // Expanding: show this node in the detail panel
+          this.openPaths = {}
+          this.selectedNode = row.id
+          this.treeHighlight = row.id
+          this.detailMode = 'live'
+        } else {
+          // Collapsing: navigate detail up to parent, collapse openPaths for this subtree
+          const parent = this.parentPath(row.id)
+          const newSel = parent || row.id
+          this.openPaths = {}
+          this.selectedNode = newSel
+          this.treeHighlight = newSel
+          this.detailMode = 'live'
+        }
       }
     },
 
@@ -498,8 +518,11 @@ export default {
         if (opening) {
           this.syncTreeToPath(path)
         } else {
+          // Collapsing: close this node in tree, highlight its parent
           this.$set(this.openNodes, path, false)
-          this.treeHighlight = path
+          const parent = this.parentPath(path)
+          this.treeHighlight = parent || path
+          this.scrollTreeHighlight()
         }
       }
     },
@@ -514,6 +537,10 @@ export default {
         if (!this.openNodes[id]) this.$set(this.openNodes, id, true)
       }
       this.treeHighlight = path
+      this.scrollTreeHighlight()
+    },
+
+    scrollTreeHighlight () {
       this.$nextTick(() => {
         const panel = this.$refs.treePanel
         if (!panel) return
