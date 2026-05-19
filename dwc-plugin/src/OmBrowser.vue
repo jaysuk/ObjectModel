@@ -97,7 +97,7 @@
                 >
                   <td :style="{ paddingLeft: (4 + row.indent * 20) + 'px' }">
                     <div class="prop-name-cell">
-                      <span class="dtoggle">{{ row.drillable ? (openPaths[row.path] ? '▼' : '▶') : '' }}</span>
+                      <span class="dtoggle">{{ row.drillable ? (openNodes[row.path] ? '▼' : '▶') : '' }}</span>
                       <span class="prop-name">{{ row.key }}</span>
                       <span v-if="row.desc && row.desc.sbcProperty === false" class="tag tag-sbc-only ml-1">SBC only</span>
                       <span v-else-if="row.desc && row.desc.sbcProperty === true" class="tag tag-sbc ml-1">SBC</span>
@@ -321,7 +321,6 @@ export default {
       dsfLabel: `DSF: ${DSF_REF_LABEL} (${Object.keys(BUNDLED_DESCRIPTIONS).length} types)`,
 
       openNodes: {},
-      openPaths: {},
       searchTerm: '',
       treeVersion: 0,
 
@@ -375,7 +374,7 @@ export default {
       const rootObj = this.selectedNode ? resolvePath(this.liveModel, this.selectedNode) : this.liveModel
       if (!rootObj || typeof rootObj !== 'object') return []
       const out = []
-      buildFlatRows(this.liveModel, rootObj, this.selectedNode, this.omModel, this.descriptions, this.openPaths, 0, out)
+      buildFlatRows(this.liveModel, rootObj, this.selectedNode, this.omModel, this.descriptions, this.openNodes, 0, out)
       return out
     },
 
@@ -487,59 +486,35 @@ export default {
       return segs.join('.').replace(/\.(\d+)(?=\.|$)/g, '[$1]')
     },
 
-    // Tree chevron click: expand/collapse node and sync the detail panel
+    // Tree chevron click: toggle expansion, sync detail panel focus
     toggleNode (row) {
       const opening = !this.openNodes[row.id]
       this.$set(this.openNodes, row.id, opening)
       if (row.isLive) {
         const newSel = opening ? row.id : (this.parentPath(row.id) || row.id)
-        // Clear openPaths entries that don't belong under the new selected node
-        this.pruneOpenPaths(newSel)
         this.selectedNode = newSel
         this.treeHighlight = opening ? row.id : newSel
         this.detailMode = 'live'
       }
     },
 
-    // Detail row expand/collapse: mirror open/close to the tree
+    // Detail row chevron click: toggle openNodes (same state tree uses), expand ancestors
     togglePath (path) {
-      const opening = !this.openPaths[path]
-      this.$set(this.openPaths, path, opening)
-      if (this.hasLiveModel) {
-        if (opening) {
-          this.syncTreeToPath(path)
-        } else {
-          // Collapsing: close this node in tree, highlight its parent
-          this.$set(this.openNodes, path, false)
-          const parent = this.parentPath(path)
-          this.treeHighlight = parent || path
-          this.scrollTreeHighlight()
+      const opening = !this.openNodes[path]
+      this.$set(this.openNodes, path, opening)
+      if (opening) {
+        // Ensure all ancestors are open so the tree row is visible
+        const segs = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)
+        const parts = []
+        for (let i = 0; i < segs.length - 1; i++) {
+          parts.push(segs[i])
+          const id = parts.join('.').replace(/\.(\d+)(?=\.|$)/g, '[$1]')
+          if (!this.openNodes[id]) this.$set(this.openNodes, id, true)
         }
+        this.treeHighlight = path
+      } else {
+        this.treeHighlight = this.parentPath(path) || path
       }
-    },
-
-    // Remove openPaths entries that aren't under the given root path
-    pruneOpenPaths (root) {
-      const prefix = root ? root + '.' : ''
-      const pruned = {}
-      for (const [k, v] of Object.entries(this.openPaths)) {
-        if (v && (k === root || k.startsWith(prefix) || (root && root.startsWith(k)))) {
-          pruned[k] = v
-        }
-      }
-      this.openPaths = pruned
-    },
-
-    // Expand tree ancestors and the target itself, highlight it — without changing the detail panel
-    syncTreeToPath (path) {
-      const segs = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)
-      const parts = []
-      for (const seg of segs) {
-        parts.push(seg)
-        const id = parts.join('.').replace(/\.(\d+)(?=\.|$)/g, '[$1]')
-        if (!this.openNodes[id]) this.$set(this.openNodes, id, true)
-      }
-      this.treeHighlight = path
       this.scrollTreeHighlight()
     },
 
@@ -585,12 +560,10 @@ export default {
           if (parts.length > 1) parts.pop()
           return parts.join('.')
         })()
-        if (this.selectedNode !== newId) { this.openPaths = {} }
         this.selectedNode = newId
         this.treeHighlight = row.id
         this.detailMode = 'live'
       } else {
-        if (this.selectedNode !== row.className) { this.openPaths = {} }
         this.selectedNode = row.className
         this.treeHighlight = row.id
         this.detailMode = 'ref'
@@ -598,7 +571,6 @@ export default {
     },
 
     selectSearchResult (clsName) {
-      this.openPaths = {}
       this.selectedNode = clsName
       this.treeHighlight = clsName
       this.detailMode = 'ref'
@@ -606,7 +578,6 @@ export default {
 
     // ── Reference navigation ──────────────────────────────────────
     refNavigate (type, name) {
-      this.openPaths = {}
       this.selectedNode = name
       this.detailMode = type === 'enum' ? 'ref-enum' : 'ref'
     },
