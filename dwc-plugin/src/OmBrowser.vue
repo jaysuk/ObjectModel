@@ -493,16 +493,16 @@ export default {
       this.$set(this.openNodes, row.id, opening)
       if (row.isLive) {
         if (opening) {
-          // Expanding: show this node in the detail panel
-          this.openPaths = {}
+          // Expanding: show this node in detail; only reset openPaths if navigating away
+          if (this.selectedNode !== row.id) this.openPaths = {}
           this.selectedNode = row.id
           this.treeHighlight = row.id
           this.detailMode = 'live'
         } else {
-          // Collapsing: navigate detail up to parent, collapse openPaths for this subtree
+          // Collapsing: navigate detail up to parent
           const parent = this.parentPath(row.id)
           const newSel = parent || row.id
-          this.openPaths = {}
+          if (this.selectedNode !== newSel) this.openPaths = {}
           this.selectedNode = newSel
           this.treeHighlight = newSel
           this.detailMode = 'live'
