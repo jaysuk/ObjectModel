@@ -29,7 +29,6 @@
 
       <!-- Tree panel -->
       <div ref="treePanel" style="width:340px;min-width:160px;flex-shrink:0;border-right:1px solid #313244;overflow-y:auto">
-        <!-- Search results -->
         <template v-if="searchTerm && searchTerm.trim()">
           <div v-if="!searchMatches.length" class="pa-3 grey--text caption">No results</div>
           <div
@@ -43,8 +42,6 @@
             <span class="tree-type">{{ g.props.length }} props</span>
           </div>
         </template>
-
-        <!-- Flat tree rows -->
         <template v-else>
           <div
             v-for="row in treeRows"
@@ -64,93 +61,36 @@
       <div class="resizer" @mousedown="startResize" />
 
       <!-- Detail panel -->
-      <div ref="detailPanel" style="flex:1;overflow-y:auto;padding:20px 24px">
+      <div ref="detailPanel" style="flex:1;overflow-y:auto;padding:16px 20px">
         <div v-if="!selectedNode" class="grey--text text-center" style="margin-top:60px;font-size:14px;line-height:2">
           Select an item in the tree to view details.
         </div>
 
-        <!-- Live object/array detail -->
+        <!-- Live object detail -->
         <template v-else-if="detailMode === 'live'">
-          <div v-if="navStack.length" class="mb-2" style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:12px">
-            <span v-for="(entry, i) in navStack" :key="i">
-              <a class="primary--text" style="cursor:pointer;text-decoration:underline dotted" @click="navBack(i)">{{ entry.label }}</a>
-              <span class="grey--text mx-1">›</span>
-            </span>
-            <span class="grey--text">{{ detailLabel }}</span>
-          </div>
-
-          <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
             <h2 class="title primary--text">{{ detailLabel }}</h2>
             <code class="om-path-code">{{ selectedNode }}</code>
             <v-btn icon x-small @click="copyPath(selectedNode)" title="Copy path"><v-icon x-small>mdi-content-copy</v-icon></v-btn>
           </div>
-
-          <!-- Class description from bundled docs -->
           <div v-if="detailClassDesc" class="class-desc mb-4">
             {{ detailClassDesc.summary }}
             <div v-if="detailClassDesc.remarks" class="grey--text mt-1" style="font-size:12px;font-style:italic">{{ detailClassDesc.remarks }}</div>
           </div>
-
-          <v-simple-table v-if="detailRows.length" dense class="prop-table">
-            <template #default>
-              <thead>
-                <tr>
-                  <th>Property</th>
-                  <th>Value</th>
-                  <th>Type</th>
-                  <th v-if="hasAnyLiveDesc">Description</th>
-                  <th style="width:32px" />
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="row in detailRows"
-                  :key="row.key"
-                  :class="{ 'row-drilldown': row.drillable }"
-                  @click="row.drillable && drillInto(row)"
-                >
-                  <td>
-                    <span class="prop-name">{{ row.key }}</span>
-                    <span v-if="row.drillable" class="primary--text ml-1">›</span>
-                    <span v-if="row.desc && row.desc.sbcProperty === false" class="tag tag-sbc-only ml-1">SBC only</span>
-                    <span v-else-if="row.desc && row.desc.sbcProperty === true" class="tag tag-sbc ml-1">SBC</span>
-                  </td>
-                  <td>
-                    <span :class="['live-val', liveValClass(row.value)]">{{ fmtLive(row.value) }}</span>
-                  </td>
-                  <td>
-                    <span class="prop-type">{{ row.typeName }}</span>
-                    <span v-if="row.nullable" class="grey--text" style="font-size:11px"> or null</span>
-                    <div v-if="row.enumMembers" style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px">
-                      <span v-for="m in row.enumMembers" :key="m" class="enum-pip">{{ m }}</span>
-                    </div>
-                  </td>
-                  <td v-if="hasAnyLiveDesc" class="desc-cell">
-                    <template v-if="row.desc">
-                      {{ row.desc.summary }}
-                      <div v-if="row.desc.remarks" class="grey--text mt-1" style="font-size:11px;font-style:italic">{{ row.desc.remarks }}</div>
-                    </template>
-                    <span v-else class="grey--text">—</span>
-                  </td>
-                  <td style="text-align:center">
-                    <v-btn icon x-small :title="'Copy: ' + row.path" @click.stop="copyPath(row.path)"><v-icon x-small>mdi-content-copy</v-icon></v-btn>
-                  </td>
-                </tr>
-              </tbody>
-            </template>
-          </v-simple-table>
-          <div v-else class="grey--text caption mt-4">No properties.</div>
+          <om-prop-table
+            :rows="detailRows"
+            :open-paths="openPaths"
+            :live-model="liveModel"
+            :descriptions="descriptions"
+            :om-model="omModel"
+            :indent="0"
+            @toggle-path="togglePath"
+            @copy="copyPath"
+          />
         </template>
 
-        <!-- Reference class detail (no live model) -->
+        <!-- Reference class detail -->
         <template v-else-if="detailMode === 'ref' && refClass">
-          <div v-if="navStack.length" class="mb-2" style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:12px">
-            <span v-for="(entry, i) in navStack" :key="i">
-              <a class="primary--text" style="cursor:pointer;text-decoration:underline dotted" @click="navBack(i)">{{ entry.label }}</a>
-              <span class="grey--text mx-1">›</span>
-            </span>
-            <span class="grey--text">{{ refClass.name }}</span>
-          </div>
           <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;flex-wrap:wrap">
             <h2 class="title primary--text">{{ refClass.name }}</h2>
           </div>
@@ -241,7 +181,7 @@
 import { omModel as BUNDLED_MODEL, omDescriptions as BUNDLED_DESCRIPTIONS, MODEL_REF, DSF_REF_LABEL } from './model-data.js'
 import store from '@/store'
 
-// ── Type helpers ───────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────
 function resolveCollectionType (t) {
   let m = t.match(/ModelCollection<([^>]+)>/)
   if (m) return m[1].replace(/\s*\|\s*null/g, '').trim()
@@ -255,8 +195,6 @@ function isCollectionType (t) { return /ModelCollection</.test(t) || /Array</.te
 function isDictType (t) { return /ModelDictionary</.test(t) || /Map</.test(t) }
 function shortType (t) { return t.replace('ModelCollection', 'Collection').replace('ModelDictionary', 'Dict').replace('ModelSet', 'Set') }
 function pascalToCamel (s) { return s ? s.charAt(0).toLowerCase() + s.slice(1) : s }
-
-// Get a human-readable type name for a live value
 function liveTypeName (val) {
   if (val === null) return 'null'
   if (Array.isArray(val)) return 'array[' + val.length + ']'
@@ -264,21 +202,173 @@ function liveTypeName (val) {
   if (typeof val === 'object') return 'object'
   return typeof val
 }
-
-// Walk a dot-path like "heat.heaters[0].current" against an object
 function resolvePath (obj, path) {
   try {
     let cur = obj
     for (const seg of path.replace(/\[(\d+)\]/g, '.$1').split('.')) {
+      if (seg === '') continue
       if (cur == null || typeof cur !== 'object') return undefined
       cur = cur instanceof Map ? cur.get(seg) : cur[seg]
     }
     return cur
   } catch (e) { return undefined }
 }
+function buildDetailRows (obj, basePath, typeName, omModel, descriptions) {
+  if (!obj || typeof obj !== 'object') return []
+  const rows = []
+  const entries = obj instanceof Map
+    ? Array.from(obj.entries())
+    : Object.entries(obj).sort((a, b) => (a[0] < b[0] ? -1 : 1))
+  for (const [key, val] of entries) {
+    const path = basePath ? basePath + '.' + key : String(key)
+    const drillable = val !== null && typeof val === 'object'
+    const cls = omModel.classes[typeName]
+    const tsProp = cls ? (cls.props || []).find(p => p.name === key) : null
+    const desc = getDesc(descriptions, typeName, String(key))
+    const enumMembers = tsProp && omModel.enums[tsProp.type]
+      ? omModel.enums[tsProp.type].members.map(m => m.key) : null
+    rows.push({ key: String(key), value: val, path, drillable, typeName: liveTypeName(val), nullable: tsProp ? tsProp.nullable : false, desc, enumMembers })
+  }
+  return rows
+}
+function getDesc (descriptions, className, propName) {
+  if (!className) return null
+  const d = descriptions[className]
+  if (!d) return null
+  return d[propName] || d[propName.charAt(0).toUpperCase() + propName.slice(1)] || null
+}
+
+// ── Inline expandable property table component ─────────────────
+// Uses a render function to avoid recursive SFC registration issues.
+// Renders a flat <table> with inline-expanded sub-rows at arbitrary depth.
+const OmPropTable = {
+  name: 'OmPropTable',
+  functional: false,
+  props: {
+    rows: Array,
+    openPaths: Object,
+    liveModel: Object,
+    descriptions: Object,
+    omModel: Object,
+    indent: { type: Number, default: 0 }
+  },
+  methods: {
+    toggle (path) { this.$emit('toggle-path', path) },
+    copy (path) { this.$emit('copy', path) },
+    fmtLive (val) {
+      if (val === undefined) return '—'
+      if (val === null) return 'null'
+      if (typeof val === 'boolean') return String(val)
+      if (typeof val === 'number') return String(val)
+      if (typeof val === 'string') return '"' + val + '"'
+      if (Array.isArray(val)) return '[' + val.length + ' items]'
+      if (val instanceof Map) return '{map ' + val.size + '}'
+      return '{object}'
+    },
+    liveClass (val) {
+      if (val === null || val === undefined) return 'live-val--null'
+      if (val === true) return 'live-val--true'
+      if (val === false) return 'live-val--false'
+      return ''
+    },
+    // Guess the TS class name for a path by walking the object model
+    guessClass (path) {
+      if (!path) return 'ObjectModel'
+      const segs = path.replace(/\[\d+\]/g, '').split('.').filter(Boolean)
+      let cls = this.omModel.classes['ObjectModel']
+      for (const seg of segs) {
+        if (!cls) return null
+        const prop = (cls.props || []).find(p => p.name === seg)
+        if (!prop) return null
+        const inner = resolveCollectionType(prop.type)
+        const t = (inner || prop.type).replace(/\s*\|\s*null/g, '').trim()
+        cls = this.omModel.classes[t] || null
+      }
+      return cls ? cls.name : null
+    },
+    subRows (row) {
+      const val = resolvePath(this.liveModel, row.path)
+      if (val === null || typeof val !== 'object') return []
+      const typeName = this.guessClass(row.path)
+      if (Array.isArray(val)) {
+        return val.map((item, i) => {
+          const path = row.path + '[' + i + ']'
+          return { key: String(i), value: item, path, drillable: item !== null && typeof item === 'object', typeName: liveTypeName(item), nullable: false, desc: null, enumMembers: null }
+        })
+      }
+      return buildDetailRows(val, row.path, typeName, this.omModel, this.descriptions)
+    },
+    hasAnyDesc (rows) { return rows.some(r => r.desc) },
+    forwardToggle (path) { this.$emit('toggle-path', path) },
+    forwardCopy (path) { this.$emit('copy', path) }
+  },
+  template: `
+    <table class="prop-table-inner" :style="{ marginLeft: indent > 0 ? '0px' : '0px' }">
+      <thead v-if="indent === 0">
+        <tr>
+          <th :style="{ paddingLeft: '4px' }">Property</th>
+          <th>Value</th>
+          <th>Type</th>
+          <th v-if="hasAnyDesc(rows)">Description</th>
+          <th style="width:28px" />
+        </tr>
+      </thead>
+      <tbody>
+        <template v-for="row in rows">
+          <tr
+            :key="row.path"
+            :class="{ 'row-drilldown': row.drillable }"
+            @click="row.drillable && toggle(row.path)"
+          >
+            <td :style="{ paddingLeft: (4 + indent * 20) + 'px' }">
+              <span v-if="row.drillable" class="tree-toggle-inline" style="display:inline-block;width:14px;font-size:9px;color:#7f849c;text-align:center;cursor:pointer">{{ openPaths[row.path] ? '▼' : '▶' }}</span>
+              <span v-else style="display:inline-block;width:14px" />
+              <span class="prop-name">{{ row.key }}</span>
+              <span v-if="row.desc && row.desc.sbcProperty === false" class="tag tag-sbc-only ml-1">SBC only</span>
+              <span v-else-if="row.desc && row.desc.sbcProperty === true" class="tag tag-sbc ml-1">SBC</span>
+            </td>
+            <td><span :class="['live-val', liveClass(row.value)]">{{ fmtLive(row.value) }}</span></td>
+            <td>
+              <span class="prop-type">{{ row.typeName }}</span>
+              <span v-if="row.nullable" class="grey--text" style="font-size:11px"> or null</span>
+              <div v-if="row.enumMembers" style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px">
+                <span v-for="m in row.enumMembers" :key="m" class="enum-pip">{{ m }}</span>
+              </div>
+            </td>
+            <td v-if="hasAnyDesc(rows)" class="desc-cell">
+              <template v-if="row.desc">{{ row.desc.summary }}</template>
+              <span v-else class="grey--text">—</span>
+            </td>
+            <td style="text-align:center;padding:0 2px">
+              <v-btn icon x-small :title="'Copy: ' + row.path" @click.stop="copy(row.path)"><v-icon x-small>mdi-content-copy</v-icon></v-btn>
+            </td>
+          </tr>
+          <tr v-if="row.drillable && openPaths[row.path]" :key="row.path + '__expand'">
+            <td :colspan="hasAnyDesc(rows) ? 5 : 4" style="padding:0;border-left:2px solid rgba(137,180,250,0.25)">
+              <om-prop-table
+                :rows="subRows(row)"
+                :open-paths="openPaths"
+                :live-model="liveModel"
+                :descriptions="descriptions"
+                :om-model="omModel"
+                :indent="indent + 1"
+                @toggle-path="forwardToggle"
+                @copy="forwardCopy"
+              />
+            </td>
+          </tr>
+        </template>
+        <tr v-if="!rows.length">
+          <td colspan="5" class="grey--text caption pa-2">No properties.</td>
+        </tr>
+      </tbody>
+    </table>
+  `
+}
 
 export default {
   name: 'OmBrowser',
+  components: { OmPropTable },
 
   data () {
     return {
@@ -287,15 +377,13 @@ export default {
       modelRef: MODEL_REF,
       dsfLabel: `DSF: ${DSF_REF_LABEL} (${Object.keys(BUNDLED_DESCRIPTIONS).length} types)`,
 
-      // Tree state
       openNodes: {},
+      openPaths: {},   // paths expanded inline in the detail panel
       searchTerm: '',
-      treeVersion: 0,  // incremented on refresh to force recompute
+      treeVersion: 0,
 
-      // Selection
-      selectedNode: null,   // dot-path for live mode, class name for ref mode
-      detailMode: null,     // 'live' | 'ref' | 'ref-enum'
-      navStack: [],
+      selectedNode: null,
+      detailMode: null,
 
       copiedSnackbar: false,
       resizing: false,
@@ -314,10 +402,9 @@ export default {
       return Object.keys(this.liveModel).length
     },
 
-    // ── Tree rows ──────────────────────────────────────────────
     treeRows () {
       // eslint-disable-next-line no-unused-expressions
-      this.treeVersion  // reactive dependency for manual refresh
+      this.treeVersion
       const rows = []
       if (this.hasLiveModel) {
         this.buildLiveRows(rows, this.liveModel, '', 0)
@@ -327,17 +414,10 @@ export default {
       return rows
     },
 
-    // ── Detail panel (live mode) ───────────────────────────────
-    detailObj () {
-      if (this.detailMode !== 'live' || !this.selectedNode || !this.liveModel) return null
-      if (this.selectedNode === '') return this.liveModel
-      return resolvePath(this.liveModel, this.selectedNode)
-    },
-
     detailLabel () {
       if (!this.selectedNode) return ''
       const parts = this.selectedNode.split('.')
-      return parts[parts.length - 1].replace(/\[\d+\]$/, '')
+      return parts[parts.length - 1].replace(/\[\d+\]$/, '') || 'objectModel'
     },
 
     detailClassDesc () {
@@ -348,44 +428,13 @@ export default {
     },
 
     detailRows () {
-      if (this.detailMode !== 'live' || !this.detailObj || typeof this.detailObj !== 'object') return []
-      const obj = this.detailObj
-      const basePath = this.selectedNode ? this.selectedNode + '.' : ''
+      if (this.detailMode !== 'live' || !this.liveModel) return []
+      const obj = this.selectedNode ? resolvePath(this.liveModel, this.selectedNode) : this.liveModel
+      if (!obj || typeof obj !== 'object') return []
       const typeName = this.guessClassName(this.selectedNode)
-      const rows = []
-
-      const entries = obj instanceof Map
-        ? Array.from(obj.entries())
-        : Object.entries(obj).sort((a, b) => a[0] < b[0] ? -1 : 1)
-
-      for (const [key, val] of entries) {
-        const path = basePath + key
-        const drillable = val !== null && typeof val === 'object'
-        const desc = this.getDescForPath(typeName, String(key))
-        // Find TS type info for this property
-        const tsProp = typeName ? this.findTsProp(typeName, String(key)) : null
-        const enumMembers = tsProp && this.omModel.enums[tsProp.type]
-          ? this.omModel.enums[tsProp.type].members.map(m => m.key)
-          : null
-        rows.push({
-          key: String(key),
-          value: val,
-          path,
-          drillable,
-          typeName: liveTypeName(val),
-          nullable: tsProp ? tsProp.nullable : false,
-          desc,
-          enumMembers
-        })
-      }
-      return rows
+      return buildDetailRows(obj, this.selectedNode, typeName, this.omModel, this.descriptions)
     },
 
-    hasAnyLiveDesc () {
-      return this.detailRows.some(r => r.desc)
-    },
-
-    // ── Detail panel (ref mode) ────────────────────────────────
     refClass () {
       if (this.detailMode !== 'ref' || !this.selectedNode) return null
       return this.omModel.classes[this.selectedNode] || null
@@ -395,8 +444,7 @@ export default {
       return this.omModel.enums[this.selectedNode] || null
     },
     refClassDesc () {
-      if (!this.refClass) return null
-      return (this.descriptions[this.refClass.name] || {}).__class__ || null
+      return this.refClass ? (this.descriptions[this.refClass.name] || {}).__class__ || null : null
     },
     currentPaths () {
       return this.refClass ? this.findPaths(this.refClass.name) : []
@@ -405,7 +453,6 @@ export default {
       return this.refClass ? (this.refClass.props || []).some(p => this.refPropDesc(p)) : false
     },
 
-    // ── Search ─────────────────────────────────────────────────
     searchMatches () {
       if (!this.searchTerm || !this.searchTerm.trim()) return []
       const lc = this.searchTerm.toLowerCase()
@@ -439,30 +486,22 @@ export default {
   },
 
   methods: {
-    // ── Tree building ──────────────────────────────────────────
-
     buildLiveRows (rows, obj, path, depth) {
       if (!obj || typeof obj !== 'object') return
       const entries = obj instanceof Map
         ? Array.from(obj.entries())
-        : Object.entries(obj).sort((a, b) => a[0] < b[0] ? -1 : 1)
-
+        : Object.entries(obj).sort((a, b) => (a[0] < b[0] ? -1 : 1))
       for (const [key, val] of entries) {
         const id = path ? path + '.' + key : String(key)
         const hasChildren = val !== null && typeof val === 'object'
-        const typeName = liveTypeName(val)
-
-        rows.push({ id, label: String(key), typeName, hasChildren, depth, isLive: true })
-
+        rows.push({ id, label: String(key), typeName: liveTypeName(val), hasChildren, depth, isLive: true })
         if (hasChildren && this.openNodes[id]) {
           if (Array.isArray(val)) {
             val.forEach((item, i) => {
               const childId = id + '[' + i + ']'
-              const childHasChildren = item !== null && typeof item === 'object'
-              rows.push({ id: childId, label: String(i), typeName: liveTypeName(item), hasChildren: childHasChildren, depth: depth + 1, isLive: true })
-              if (childHasChildren && this.openNodes[childId]) {
-                this.buildLiveRows(rows, item, childId, depth + 2)
-              }
+              const ch = item !== null && typeof item === 'object'
+              rows.push({ id: childId, label: String(i), typeName: liveTypeName(item), hasChildren: ch, depth: depth + 1, isLive: true })
+              if (ch && this.openNodes[childId]) this.buildLiveRows(rows, item, childId, depth + 2)
             })
           } else {
             this.buildLiveRows(rows, val, id, depth + 1)
@@ -489,19 +528,14 @@ export default {
     },
 
     refresh () { this.treeVersion++ },
-
-    toggleNode (id) {
-      this.$set(this.openNodes, id, !this.openNodes[id])
-    },
+    toggleNode (id) { this.$set(this.openNodes, id, !this.openNodes[id]) },
+    togglePath (path) { this.$set(this.openPaths, path, !this.openPaths[path]) },
 
     expandAll () {
       if (this.hasLiveModel) {
-        // Expand top level only to avoid hanging on large models
         const newOpen = {}
         if (this.liveModel) {
-          for (const key of Object.keys(this.liveModel)) {
-            newOpen[key] = true
-          }
+          for (const key of Object.keys(this.liveModel)) newOpen[key] = true
         }
         this.openNodes = newOpen
       } else {
@@ -521,68 +555,50 @@ export default {
         this.openNodes = newOpen
       }
     },
-
     collapseAll () { this.openNodes = {} },
 
     selectRow (row) {
-      this.navStack = []
+      // Clear inline expansions when changing top-level selection
       if (row.isLive) {
         const val = resolvePath(this.liveModel, row.id)
         if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
-          this.selectedNode = row.id
+          if (this.selectedNode !== row.id) {
+            this.openPaths = {}
+            this.selectedNode = row.id
+          }
+          this.detailMode = 'live'
+        } else if (Array.isArray(val)) {
+          if (this.selectedNode !== row.id) {
+            this.openPaths = {}
+            this.selectedNode = row.id
+          }
           this.detailMode = 'live'
         } else {
-          // For leaf/array, show parent
-          const parts = row.id.split('.')
-          parts.pop()
-          this.selectedNode = parts.join('.') || ''
+          // leaf — show parent
+          const parts = row.id.replace(/\[\d+\].*/, '').split('.')
+          if (parts.length > 1) parts.pop()
+          const parentId = parts.join('.')
+          if (this.selectedNode !== parentId) {
+            this.openPaths = {}
+            this.selectedNode = parentId
+          }
           this.detailMode = 'live'
         }
       } else {
+        this.openPaths = {}
         this.selectedNode = row.className
         this.detailMode = 'ref'
       }
     },
 
     selectSearchResult (clsName) {
-      this.navStack = []
+      this.openPaths = {}
       this.selectedNode = clsName
       this.detailMode = 'ref'
     },
 
-    // ── Live detail drill-down ─────────────────────────────────
-
-    drillInto (row) {
-      if (this.selectedNode !== null) {
-        this.navStack = [...this.navStack, { label: this.detailLabel || this.selectedNode, node: this.selectedNode, mode: this.detailMode }]
-      }
-      this.selectedNode = row.path
-      this.detailMode = 'live'
-    },
-
-    navBack (idx) {
-      const entry = this.navStack[idx]
-      if (!entry) return
-      this.navStack = this.navStack.slice(0, idx)
-      this.selectedNode = entry.node
-      this.detailMode = entry.mode
-    },
-
-    // ── Reference mode navigation ──────────────────────────────
-
-    refNavigate (type, name) {
-      if (this.selectedNode) {
-        this.navStack = [...this.navStack, { label: this.selectedNode, node: this.selectedNode, mode: this.detailMode }]
-      }
-      this.selectedNode = name
-      this.detailMode = type === 'enum' ? 'ref-enum' : 'ref'
-    },
-
-    // ── Description helpers ────────────────────────────────────
-
     guessClassName (path) {
       if (!path) return 'ObjectModel'
-      // Walk the TS model to find the class at this path
       const segs = path.replace(/\[\d+\]/g, '').split('.').filter(Boolean)
       let cls = this.omModel.classes['ObjectModel']
       for (const seg of segs) {
@@ -596,25 +612,13 @@ export default {
       return cls ? cls.name : null
     },
 
-    findTsProp (className, propName) {
-      const cls = this.omModel.classes[className]
-      if (!cls) return null
-      return (cls.props || []).find(p => p.name === propName) || null
-    },
-
-    getDescForPath (className, propName) {
-      if (!className) return null
-      return this.getPropDesc(className, propName)
-    },
-
     getPropDesc (className, propName) {
       const d = this.descriptions[className]
       if (!d) return null
       return d[propName] || d[propName.charAt(0).toUpperCase() + propName.slice(1)] || null
     },
     refPropDesc (p) {
-      if (!this.refClass) return null
-      return this.getPropDesc(this.refClass.name, p.name)
+      return this.refClass ? this.getPropDesc(this.refClass.name, p.name) : null
     },
     enumMemberDesc (enumName, memberName) {
       const d = this.descriptions[enumName]
@@ -622,8 +626,6 @@ export default {
       const e = d[memberName] || d[pascalToCamel(memberName)]
       return e ? e.summary || null : null
     },
-
-    // ── Reference type helpers ─────────────────────────────────
 
     refDrillTarget (p) {
       const inner = resolveCollectionType(p.type)
@@ -647,6 +649,11 @@ export default {
       if (this.omModel.classes[p.type]) return { name: p.type, kind: 'class' }
       if (this.omModel.enums[p.type]) return { name: p.type, kind: 'enum' }
       return null
+    },
+    refNavigate (type, name) {
+      this.openPaths = {}
+      this.selectedNode = name
+      this.detailMode = type === 'enum' ? 'ref-enum' : 'ref'
     },
     refPropPath (p) {
       const paths = this.findPaths(this.refClass.name)
@@ -699,34 +706,11 @@ export default {
       return [...results].sort()
     },
 
-    // ── Live value formatting ──────────────────────────────────
-
-    fmtLive (val) {
-      if (val === undefined) return '—'
-      if (val === null) return 'null'
-      if (typeof val === 'boolean') return String(val)
-      if (typeof val === 'number') return String(val)
-      if (typeof val === 'string') return '"' + val + '"'
-      if (Array.isArray(val)) return '[' + val.length + ' items]'
-      if (val instanceof Map) return '{map ' + val.size + '}'
-      return '{object}'
-    },
-    liveValClass (val) {
-      if (val === null || val === undefined) return 'live-val--null'
-      if (val === true) return 'live-val--true'
-      if (val === false) return 'live-val--false'
-      return ''
-    },
-
-    // ── Clipboard ─────────────────────────────────────────────
-
     copyPath (path) {
       if (navigator.clipboard) {
         navigator.clipboard.writeText(path).then(() => { this.copiedSnackbar = true }).catch(() => {})
       }
     },
-
-    // ── Resize ────────────────────────────────────────────────
 
     startResize (e) {
       this.resizing = true
@@ -753,19 +737,12 @@ export default {
 .om-browser { font-family: 'Segoe UI', system-ui, sans-serif; }
 
 .tree-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 13px;
-  user-select: none;
-  min-height: 26px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px; border-radius: 4px; cursor: pointer;
+  font-size: 13px; user-select: none; min-height: 26px;
 }
 .tree-row:hover { background: rgba(255,255,255,0.06); }
 .tree-row--selected { background: rgba(137,180,250,0.15); }
-
 .tree-toggle { width: 14px; flex-shrink: 0; font-size: 9px; color: #7f849c; text-align: center; }
 .tree-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-type { font-size: 11px; color: #7f849c; margin-left: auto; padding-left: 8px; flex-shrink: 0; white-space: nowrap; }
@@ -778,24 +755,34 @@ export default {
   background: rgba(249,226,175,0.08); border: 1px solid rgba(249,226,175,0.2);
   border-radius: 4px; padding: 2px 8px;
 }
-
 .class-desc {
   font-size: 13px; line-height: 1.6;
   background: rgba(137,180,250,0.06); border-left: 3px solid #89b4fa;
   padding: 8px 12px; border-radius: 0 4px 4px 0;
 }
 
+/* Inline expandable table */
+.prop-table-inner { width: 100%; border-collapse: collapse; font-size: 13px; }
+.prop-table-inner th {
+  text-align: left; font-size: 11px; font-weight: 600; color: #7f849c;
+  padding: 4px 8px; border-bottom: 1px solid #313244; white-space: nowrap;
+}
+.prop-table-inner td { padding: 5px 8px; border-bottom: 1px solid rgba(49,50,68,0.5); vertical-align: top; }
+.prop-table-inner tr:last-child td { border-bottom: none; }
+.prop-table-inner tr:hover td { background: rgba(255,255,255,0.03); }
+
+.row-drilldown { cursor: pointer; }
+.row-drilldown:hover td { background: rgba(137,180,250,0.05) !important; }
+
+/* Shared with both table variants */
 .prop-table { width: 100%; }
 .prop-name { font-family: monospace; font-weight: 500; }
 .prop-name--readonly { color: #cba6f7; }
-.prop-type { font-family: monospace; color: #94e2d5; }
+.prop-type { font-family: monospace; color: #94e2d5; font-size: 12px; }
 .prop-type--link { cursor: pointer; text-decoration: underline dotted; }
 .prop-type--link:hover { color: #f5c2e7; }
 .prop-default { font-family: monospace; font-size: 12px; color: #f9e2af; background: none; }
-.desc-cell { font-size: 12px; line-height: 1.5; }
-
-.row-drilldown { cursor: pointer; }
-.row-drilldown:hover td { background: rgba(137,180,250,0.05); }
+.desc-cell { font-size: 12px; line-height: 1.5; max-width: 300px; }
 
 .tag { font-size: 10px; border-radius: 3px; padding: 1px 5px; font-weight: 500; }
 .tag-sbc-only { background: rgba(250,179,135,0.2); color: #fab387; }
