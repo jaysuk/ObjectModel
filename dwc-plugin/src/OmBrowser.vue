@@ -500,11 +500,11 @@ export default {
 
     // Expand tree ancestors for a given path and highlight the row — without changing the detail panel
     syncTreeToPath (path) {
-      // Open every ancestor so the target row is visible
+      // Open every ancestor (but NOT the target itself) so the target row is visible
       const segs = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)
       const parts = []
-      for (const seg of segs) {
-        parts.push(seg)
+      for (let i = 0; i < segs.length - 1; i++) {
+        parts.push(segs[i])
         const id = parts.join('.').replace(/\.(\d+)(?=\.|$)/g, '[$1]')
         if (!this.openNodes[id]) this.$set(this.openNodes, id, true)
       }
