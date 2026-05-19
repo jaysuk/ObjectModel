@@ -1442,6 +1442,7 @@ function restoreDetailState(state) {
   const detail = document.getElementById('detailPanel');
   if (state.type === 'class' && model.classes[state.key]) {
     detail.innerHTML = renderClassDetail(model.classes[state.key]);
+    navigateTreeToClass(state.key);
   } else if (state.type === 'enum' && model.enums[state.key]) {
     detail.innerHTML = renderEnumDetail(model.enums[state.key]);
   }
@@ -1701,20 +1702,22 @@ function toggleInlineExpand(row, detail) {
 
   if (detailOpenPaths.has(key)) {
     // Collapse: remove all rows with data-expand-key starting with this key
-    // Also purge all descendant keys from detailOpenPaths
     for (const k of [...detailOpenPaths]) {
       if (k === key || k.startsWith(key + '::')) detailOpenPaths.delete(k);
     }
     detail.querySelectorAll(`tr[data-expand-key^="${CSS.escape(key)}"]`).forEach(r => r.remove());
-    // Reset chevron
     const chevron = row.querySelector('.prop-drilldown-chevron');
     if (chevron) chevron.textContent = '▶';
+    // Sync tree back to the class currently shown in the detail panel
+    navigateTreeToClass(lastDetailKey);
   } else {
     // Expand: insert child rows after this row
     detailOpenPaths.add(key);
     const chevron = row.querySelector('.prop-drilldown-chevron');
     if (chevron) chevron.textContent = '▼';
     insertExpandedRows(row, targetClass, path, key, 1, detail);
+    // Sync tree to the expanded class
+    navigateTreeToClass(targetClass);
   }
 }
 
