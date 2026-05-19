@@ -406,14 +406,14 @@
   tr.prop-row-drilldown { cursor: pointer; }
   tr.prop-row-drilldown:hover td { background: rgba(137,180,250,0.07); }
   .prop-drilldown-chevron {
-    display: inline-block;
     width: 14px;
     font-size: 9px;
     color: var(--text-dim);
     text-align: center;
-    transition: transform 0.15s;
+    flex-shrink: 0;
   }
-  .dtoggle { display: inline-block; width: 14px; font-size: 9px; color: var(--text-dim); text-align: center; }
+  .prop-name-cell { display: flex; align-items: center; }
+  .dtoggle { width: 14px; font-size: 9px; color: var(--text-dim); text-align: center; flex-shrink: 0; }
   tr.expanded-child td { border-left: 2px solid rgba(137,180,250,0.2); }
 
   .placeholder {
@@ -535,7 +535,7 @@
 // ────────────────────────────────────────────────────────────
 // Constants
 // ────────────────────────────────────────────────────────────
-const VIEWER_VERSION = '2.1.0';
+const VIEWER_VERSION = '2.2.0';
 const OM_REPO   = 'Duet3D/ObjectModel';
 const DSF_REPO  = 'Duet3D/DuetSoftwareFramework';
 const OM_RAW    = 'https://raw.githubusercontent.com/' + OM_REPO;
@@ -1786,7 +1786,7 @@ function insertExpandedRows(afterRow, className, basePath, expandKey, indent, de
       : `<span style="color:var(--text-dim)">—</span>`;
 
     tr.innerHTML = `
-      <td style="padding-left:${paddingLeft}px">${toggle}<span class="prop-name${p.readonly ? ' is-readonly' : ''}">${escHtml(p.name)}</span>${sbcBadge}</td>
+      <td style="padding-left:${paddingLeft}px"><div class="prop-name-cell">${toggle}<span class="prop-name${p.readonly ? ' is-readonly' : ''}">${escHtml(p.name)}</span>${sbcBadge}</div></td>
       <td>${typeHtml}${enumInline}</td>
       <td><span class="prop-default">${escHtml(p.default || '')}</span></td>
       ${colCount >= 4 ? `<td class="prop-desc-cell">${descHtml}</td>` : ''}
@@ -1933,7 +1933,7 @@ function renderClassDetail(cls) {
     }
 
     html += `<tr${rowClass}>
-      <td>${chevron}<span class="prop-name">${escHtml(p.name)}</span>${sbcBadge}</td>
+      <td><div class="prop-name-cell">${chevron}<span class="prop-name">${escHtml(p.name)}</span>${sbcBadge}</div></td>
       <td>${typeHtml}${enumInline}</td>
       <td><span class="prop-default">${escHtml(p.default || '')}</span></td>
       ${hasAnyDesc ? `<td class="prop-desc-cell">${descHtml}</td>` : ''}
