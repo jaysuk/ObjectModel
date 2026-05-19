@@ -490,21 +490,26 @@ export default {
       }
     },
 
-    // Detail row expand/collapse: keep the detail panel as-is but mirror to the tree
+    // Detail row expand/collapse: mirror open/close to the tree
     togglePath (path) {
-      this.$set(this.openPaths, path, !this.openPaths[path])
+      const opening = !this.openPaths[path]
+      this.$set(this.openPaths, path, opening)
       if (this.hasLiveModel) {
-        this.syncTreeToPath(path)
+        if (opening) {
+          this.syncTreeToPath(path)
+        } else {
+          this.$set(this.openNodes, path, false)
+          this.treeHighlight = path
+        }
       }
     },
 
-    // Expand tree ancestors for a given path and highlight the row — without changing the detail panel
+    // Expand tree ancestors and the target itself, highlight it — without changing the detail panel
     syncTreeToPath (path) {
-      // Open every ancestor (but NOT the target itself) so the target row is visible
       const segs = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)
       const parts = []
-      for (let i = 0; i < segs.length - 1; i++) {
-        parts.push(segs[i])
+      for (const seg of segs) {
+        parts.push(seg)
         const id = parts.join('.').replace(/\.(\d+)(?=\.|$)/g, '[$1]')
         if (!this.openNodes[id]) this.$set(this.openNodes, id, true)
       }
