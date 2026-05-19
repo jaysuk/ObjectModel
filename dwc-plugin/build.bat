@@ -13,6 +13,7 @@ if exist "%DWC_DIR%\src\plugins\%PLUGIN_ID%" rmdir /s /q "%DWC_DIR%\src\plugins\
 del /q "%DWC_DIR%\dist\%PLUGIN_ID%-*.zip" 2>nul
 del /q "%DWC_DIR%\dist\js\%PLUGIN_ID%*" 2>nul
 del /q "%DWC_DIR%\dist\css\%PLUGIN_ID%*" 2>nul
+if exist "%DWC_DIR%\node_modules\.cache" rmdir /s /q "%DWC_DIR%\node_modules\.cache"
 
 echo Building plugin...
 cd /d "%DWC_DIR%"
