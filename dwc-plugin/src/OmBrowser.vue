@@ -486,14 +486,16 @@ export default {
       return segs.join('.').replace(/\.(\d+)(?=\.|$)/g, '[$1]')
     },
 
-    // Tree chevron click: toggle expansion, sync detail panel focus
+    // Tree chevron click: toggle expansion, keep detail anchored at parent
     toggleNode (row) {
       const opening = !this.openNodes[row.id]
       this.$set(this.openNodes, row.id, opening)
       if (row.isLive) {
-        const newSel = opening ? row.id : (this.parentPath(row.id) || row.id)
+        // Show the parent in the detail panel so the expanded child appears inline
+        const parent = this.parentPath(row.id)
+        const newSel = parent || row.id
         this.selectedNode = newSel
-        this.treeHighlight = opening ? row.id : newSel
+        this.treeHighlight = row.id
         this.detailMode = 'live'
       }
     },
