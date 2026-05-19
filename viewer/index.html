@@ -402,15 +402,19 @@
   .detail-breadcrumb .bc-sep { color: var(--border); margin: 0 2px; }
   .detail-breadcrumb .bc-current { color: var(--text-dim); cursor: default; text-decoration: none; }
 
-  /* clickable row in prop table */
+  /* clickable/expandable row in prop table */
   tr.prop-row-drilldown { cursor: pointer; }
   tr.prop-row-drilldown:hover td { background: rgba(137,180,250,0.07); }
   .prop-drilldown-chevron {
-    color: var(--accent);
-    font-size: 13px;
-    margin-left: 6px;
-    opacity: 0.7;
+    display: inline-block;
+    width: 14px;
+    font-size: 9px;
+    color: var(--text-dim);
+    text-align: center;
+    transition: transform 0.15s;
   }
+  .dtoggle { display: inline-block; width: 14px; font-size: 9px; color: var(--text-dim); text-align: center; }
+  tr.expanded-child td { border-left: 2px solid rgba(137,180,250,0.2); }
 
   .placeholder {
     color: var(--text-dim);
@@ -531,7 +535,7 @@
 // ────────────────────────────────────────────────────────────
 // Constants
 // ────────────────────────────────────────────────────────────
-const VIEWER_VERSION = '2.0.0';
+const VIEWER_VERSION = '2.1.0';
 const OM_REPO   = 'Duet3D/ObjectModel';
 const DSF_REPO  = 'Duet3D/DuetSoftwareFramework';
 const OM_RAW    = 'https://raw.githubusercontent.com/' + OM_REPO;
@@ -1434,6 +1438,7 @@ function restoreDetailState(state) {
   navStack = state.stack || [];
   lastDetailType = state.type;
   lastDetailKey = state.key;
+  detailOpenPaths.clear();
   const detail = document.getElementById('detailPanel');
   if (state.type === 'class' && model.classes[state.key]) {
     detail.innerHTML = renderClassDetail(model.classes[state.key]);
@@ -1661,7 +1666,9 @@ function findPaths(targetClassName) {
 }
 
 function wireDetailLinks(detail) {
+  // Type links navigate away — but skip <tr> drilldown rows (those expand inline instead)
   detail.querySelectorAll('[data-goto]').forEach(el => {
+    if (el.tagName === 'TR') return;
     el.addEventListener('click', e => {
       e.stopPropagation();
       const target = el.dataset.goto;
@@ -1672,12 +1679,9 @@ function wireDetailLinks(detail) {
   detail.querySelectorAll('[data-bc]').forEach(el => {
     el.addEventListener('click', () => navigateBreadcrumb(parseInt(el.dataset.bc)));
   });
+  // Drilldown rows now toggle inline expansion instead of navigating away
   detail.querySelectorAll('tr.prop-row-drilldown').forEach(row => {
-    row.addEventListener('click', () => {
-      const target = row.dataset.goto;
-      if (model.classes[target]) navigateDetail('class', target);
-      else if (model.enums[target]) navigateDetail('enum', target);
-    });
+    row.addEventListener('click', () => toggleInlineExpand(row, detail));
   });
   detail.querySelectorAll('[data-copy-path]').forEach(btn => {
     btn.addEventListener('click', e => {
@@ -1685,6 +1689,130 @@ function wireDetailLinks(detail) {
       copyPathToClipboard(btn.dataset.copyPath, btn);
     });
   });
+}
+
+// Track which paths are currently expanded in the detail panel
+const detailOpenPaths = new Set();
+
+function toggleInlineExpand(row, detail) {
+  const targetClass = row.dataset.goto;
+  const path = row.dataset.path;
+  const key = path + '::' + targetClass;
+
+  if (detailOpenPaths.has(key)) {
+    // Collapse: remove all rows with data-expand-key starting with this key
+    // Also purge all descendant keys from detailOpenPaths
+    for (const k of [...detailOpenPaths]) {
+      if (k === key || k.startsWith(key + '::')) detailOpenPaths.delete(k);
+    }
+    detail.querySelectorAll(`tr[data-expand-key^="${CSS.escape(key)}"]`).forEach(r => r.remove());
+    // Reset chevron
+    const chevron = row.querySelector('.prop-drilldown-chevron');
+    if (chevron) chevron.textContent = '▶';
+  } else {
+    // Expand: insert child rows after this row
+    detailOpenPaths.add(key);
+    const chevron = row.querySelector('.prop-drilldown-chevron');
+    if (chevron) chevron.textContent = '▼';
+    insertExpandedRows(row, targetClass, path, key, 1, detail);
+  }
+}
+
+function insertExpandedRows(afterRow, className, basePath, expandKey, indent, detail) {
+  const cls = model.classes[className];
+  if (!cls) return;
+  const hasAnyDesc = (cls.props || []).some(p => getPropDesc(cls.name, p.name));
+  // Count columns in table to set colspan correctly
+  const headerRow = detail.querySelector('.prop-table thead tr');
+  const colCount = headerRow ? headerRow.cells.length : 4;
+
+  let insertAfter = afterRow;
+
+  for (const p of cls.props || []) {
+    const desc = getPropDesc(cls.name, p.name);
+    const inner = resolveCollectionType(p.type);
+    const isCol = isCollectionType(p.type);
+    const isDct = isDictType(p.type);
+    const isEnum = !!model.enums[p.type];
+    const isCls = !!model.classes[p.type];
+
+    const drillTarget = (isCol && inner && model.classes[inner]) ? inner
+      : (isDct && inner && model.classes[inner]) ? inner
+      : (isCls) ? p.type
+      : null;
+
+    // Type display
+    let typeHtml;
+    if (isCol && inner && (model.classes[inner] || model.enums[inner])) {
+      typeHtml = `<span class="prop-type prop-link" data-goto="${escHtml(inner)}">${escHtml(inner)}[]</span>`;
+    } else if (isDct && inner && model.classes[inner]) {
+      typeHtml = `<span class="prop-type prop-link" data-goto="${escHtml(inner)}">${escHtml(inner)}{}</span>`;
+    } else if (isCls || isEnum) {
+      typeHtml = `<span class="prop-type${(isCls || isEnum) ? ' prop-link' : ''}" ${(isCls||isEnum) ? `data-goto="${escHtml(p.type)}"` : ''}>${escHtml(p.type)}</span>`;
+    } else {
+      typeHtml = `<span class="prop-type">${escHtml(shortType(p.type))}</span>`;
+    }
+    if (p.nullable) typeHtml += ` <span style="color:var(--text-dim);font-size:11px">or null</span>`;
+
+    let enumInline = '';
+    if (isEnum) {
+      const en = model.enums[p.type];
+      enumInline = `<div class="enum-inline">` +
+        en.members.map(m => `<span class="enum-pip">${escHtml(m.key)}</span>`).join('') + `</div>`;
+    }
+
+    let sbcBadge = '';
+    if (desc?.sbcProperty === false) sbcBadge = ` <span class="tag tag-sbc-only">SBC only</span>`;
+    else if (desc?.sbcProperty === true) sbcBadge = ` <span class="tag tag-sbc-also">SBC</span>`;
+
+    const childPath = basePath + '.' + p.name;
+    const propCopyPath = childPath;
+    const paddingLeft = 10 + indent * 20;
+    const childKey = expandKey + '::' + p.name;
+
+    const tr = document.createElement('tr');
+    tr.dataset.expandKey = expandKey;
+    tr.dataset.path = childPath;
+    tr.classList.add('expanded-child');
+    if (drillTarget) {
+      tr.classList.add('prop-row-drilldown');
+      tr.dataset.goto = drillTarget;
+      tr.addEventListener('click', () => toggleInlineExpand(tr, detail));
+    }
+
+    const toggle = drillTarget ? `<span class="prop-drilldown-chevron">▶</span>` : `<span class="dtoggle"></span>`;
+    const descHtml = desc?.summary
+      ? escHtml(desc.summary) + (desc.remarks ? `<div class="remarks">${escHtml(desc.remarks)}</div>` : '')
+      : `<span style="color:var(--text-dim)">—</span>`;
+
+    tr.innerHTML = `
+      <td style="padding-left:${paddingLeft}px">${toggle}<span class="prop-name${p.readonly ? ' is-readonly' : ''}">${escHtml(p.name)}</span>${sbcBadge}</td>
+      <td>${typeHtml}${enumInline}</td>
+      <td><span class="prop-default">${escHtml(p.default || '')}</span></td>
+      ${colCount >= 4 ? `<td class="prop-desc-cell">${descHtml}</td>` : ''}
+      <td style="text-align:center"><button class="copy-path-btn" data-copy-path="${escHtml(propCopyPath)}" title="Copy path">⎘</button></td>
+    `;
+
+    // Wire type links (spans) but not the tr itself — it expands inline
+    tr.querySelectorAll('[data-goto]').forEach(el => {
+      if (el.tagName === 'TR') return;
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        const t = el.dataset.goto;
+        if (model.classes[t]) navigateDetail('class', t);
+        else if (model.enums[t]) navigateDetail('enum', t);
+      });
+    });
+    tr.querySelectorAll('[data-copy-path]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        copyPathToClipboard(btn.dataset.copyPath, btn);
+      });
+    });
+
+    insertAfter.insertAdjacentElement('afterend', tr);
+    insertAfter = tr;
+  }
 }
 
 function renderBreadcrumb() {
@@ -1785,13 +1913,17 @@ function renderClassDetail(cls) {
         `</div>`;
     }
 
+    // Build copy path: base path with array suffix for collections, then .propName
+    const isColOrDict = isCol || isDct;
+    const propCopyPath = (basePath ? basePath + (isColOrDict ? '[0].' : '.') : '') + p.name;
+
     // Determine if this row drills into a class (not just an enum)
     const drillTarget = (isCol && inner && model.classes[inner]) ? inner
       : (isDct && inner && model.classes[inner]) ? inner
       : (isCls) ? p.type
       : null;
-    const rowClass = drillTarget ? ` class="prop-row-drilldown" data-goto="${escHtml(drillTarget)}"` : '';
-    const chevron = drillTarget ? `<span class="prop-drilldown-chevron">›</span>` : '';
+    const rowClass = drillTarget ? ` class="prop-row-drilldown" data-goto="${escHtml(drillTarget)}" data-path="${escHtml(propCopyPath)}"` : '';
+    const chevron = drillTarget ? `<span class="prop-drilldown-chevron">▶</span>` : '';
 
     let sbcBadge = '';
     if (desc?.sbcProperty === false) {
@@ -1800,12 +1932,8 @@ function renderClassDetail(cls) {
       sbcBadge = ` <span class="tag tag-sbc-also" title="Managed by DuetSoftwareFramework but also available in standalone mode">SBC</span>`;
     }
 
-    // Build copy path: base path with array suffix for collections, then .propName
-    const isColOrDict = isCol || isDct;
-    const propCopyPath = (basePath ? basePath + (isColOrDict ? '[0].' : '.') : '') + p.name;
-
     html += `<tr${rowClass}>
-      <td><span class="prop-name">${escHtml(p.name)}</span>${chevron}${sbcBadge}</td>
+      <td>${chevron}<span class="prop-name">${escHtml(p.name)}</span>${sbcBadge}</td>
       <td>${typeHtml}${enumInline}</td>
       <td><span class="prop-default">${escHtml(p.default || '')}</span></td>
       ${hasAnyDesc ? `<td class="prop-desc-cell">${descHtml}</td>` : ''}

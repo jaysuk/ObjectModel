@@ -50,7 +50,7 @@
             :style="{ paddingLeft: (8 + row.depth * 16) + 'px' }"
             @click="selectRow(row)"
           >
-            <span class="tree-toggle" @click.stop="toggleNode(row.id)">{{ row.hasChildren ? (openNodes[row.id] ? '▼' : '▶') : '' }}</span>
+            <span class="tree-toggle" @click.stop="toggleNode(row)">{{ row.hasChildren ? (openNodes[row.id] ? '▼' : '▶') : '' }}</span>
             <span class="tree-name">{{ row.label }}</span>
             <span class="tree-type">{{ row.typeName }}</span>
           </div>
@@ -96,10 +96,12 @@
                   @click="row.drillable && togglePath(row.path)"
                 >
                   <td :style="{ paddingLeft: (4 + row.indent * 20) + 'px' }">
-                    <span class="dtoggle">{{ row.drillable ? (openPaths[row.path] ? '▼' : '▶') : '' }}</span>
-                    <span class="prop-name">{{ row.key }}</span>
-                    <span v-if="row.desc && row.desc.sbcProperty === false" class="tag tag-sbc-only ml-1">SBC only</span>
-                    <span v-else-if="row.desc && row.desc.sbcProperty === true" class="tag tag-sbc ml-1">SBC</span>
+                    <div class="prop-name-cell">
+                      <span class="dtoggle">{{ row.drillable ? (openPaths[row.path] ? '▼' : '▶') : '' }}</span>
+                      <span class="prop-name">{{ row.key }}</span>
+                      <span v-if="row.desc && row.desc.sbcProperty === false" class="tag tag-sbc-only ml-1">SBC only</span>
+                      <span v-else-if="row.desc && row.desc.sbcProperty === true" class="tag tag-sbc ml-1">SBC</span>
+                    </div>
                   </td>
                   <td><span :class="['live-val', liveValClass(row.value)]">{{ fmtLive(row.value) }}</span></td>
                   <td>
@@ -476,8 +478,47 @@ export default {
 
     refresh () { this.treeVersion++ },
 
-    toggleNode (id) { this.$set(this.openNodes, id, !this.openNodes[id]) },
-    togglePath (path) { this.$set(this.openPaths, path, !this.openPaths[path]) },
+    toggleNode (row) {
+      this.$set(this.openNodes, row.id, !this.openNodes[row.id])
+      // Also focus this node in the detail panel
+      if (row.isLive) {
+        if (this.selectedNode !== row.id) { this.openPaths = {}; this.selectedNode = row.id }
+        this.detailMode = 'live'
+      }
+    },
+
+    togglePath (path) {
+      this.$set(this.openPaths, path, !this.openPaths[path])
+      // Sync tree: expand to show this path in the tree and select it
+      if (this.hasLiveModel) {
+        this.expandTreeTo(path)
+      }
+    },
+
+    // Expand the tree to show a given live path, select it, and scroll it into view
+    expandTreeTo (path) {
+      // Expand each ancestor segment so the path is visible in the tree
+      const normalised = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)
+      const parts = []
+      for (const seg of normalised) {
+        parts.push(seg)
+        const id = parts.join('.').replace(/\.(\d+)(?=\.|$)/g, '[$1]')
+        if (!this.openNodes[id]) this.$set(this.openNodes, id, true)
+      }
+      // Select the path so the tree highlights it and the detail panel shows it
+      if (this.selectedNode !== path) {
+        this.openPaths = { [path]: this.openPaths[path] }
+        this.selectedNode = path
+        this.detailMode = 'live'
+      }
+      // Scroll the highlighted tree row into view
+      this.$nextTick(() => {
+        const panel = this.$refs.treePanel
+        if (!panel) return
+        const sel = panel.querySelector('.tree-row--selected')
+        if (sel) sel.scrollIntoView({ block: 'nearest' })
+      })
+    },
 
     expandAll () {
       if (this.hasLiveModel) {
@@ -720,7 +761,8 @@ export default {
 /* Indent guide — left border on expanded children */
 .detail-table td[style*="padding-left: 2"] { border-left: 2px solid rgba(137,180,250,0.2); }
 
-.dtoggle { display: inline-block; width: 14px; font-size: 9px; color: #7f849c; text-align: center; flex-shrink: 0; }
+.prop-name-cell { display: flex; align-items: center; }
+.dtoggle { width: 14px; font-size: 9px; color: #7f849c; text-align: center; flex-shrink: 0; }
 
 .prop-table { width: 100%; }
 .prop-name { font-family: monospace; font-weight: 500; }
