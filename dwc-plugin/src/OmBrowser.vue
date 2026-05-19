@@ -638,8 +638,22 @@ export default {
     },
 
     copyPath (path) {
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(path).then(() => { this.copiedSnackbar = true }).catch(() => {})
+      // navigator.clipboard requires focus and secure context — not reliable in DWC iframes.
+      // Use execCommand fallback which works everywhere.
+      try {
+        const el = document.createElement('textarea')
+        el.value = path
+        el.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none'
+        document.body.appendChild(el)
+        el.focus()
+        el.select()
+        document.execCommand('copy')
+        document.body.removeChild(el)
+        this.copiedSnackbar = true
+      } catch (e) {
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(path).then(() => { this.copiedSnackbar = true }).catch(() => {})
+        }
       }
     },
 
