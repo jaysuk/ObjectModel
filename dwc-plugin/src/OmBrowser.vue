@@ -96,8 +96,7 @@
                   @click="row.drillable && togglePath(row.path)"
                 >
                   <td :style="{ paddingLeft: (4 + row.indent * 20) + 'px' }">
-                    <span v-if="row.drillable" class="dtoggle">{{ openPaths[row.path] ? '▼' : '▶' }}</span>
-                    <span v-else class="dtoggle" />
+                    <span class="dtoggle">{{ row.drillable ? (openPaths[row.path] ? '▼' : '▶') : '' }}</span>
                     <span class="prop-name">{{ row.key }}</span>
                     <span v-if="row.desc && row.desc.sbcProperty === false" class="tag tag-sbc-only ml-1">SBC only</span>
                     <span v-else-if="row.desc && row.desc.sbcProperty === true" class="tag tag-sbc ml-1">SBC</span>
