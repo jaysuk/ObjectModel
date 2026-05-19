@@ -66,7 +66,7 @@
           Select an item in the tree to view details.
         </div>
 
-        <!-- Live object detail -->
+        <!-- Live object detail — flat table with expandable rows -->
         <template v-else-if="detailMode === 'live'">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
             <h2 class="title primary--text">{{ detailLabel }}</h2>
@@ -77,16 +77,50 @@
             {{ detailClassDesc.summary }}
             <div v-if="detailClassDesc.remarks" class="grey--text mt-1" style="font-size:12px;font-style:italic">{{ detailClassDesc.remarks }}</div>
           </div>
-          <om-prop-table
-            :rows="detailRows"
-            :open-paths="openPaths"
-            :live-model="liveModel"
-            :descriptions="descriptions"
-            :om-model="omModel"
-            :indent="0"
-            @toggle-path="togglePath"
-            @copy="copyPath"
-          />
+
+          <table class="detail-table">
+            <thead>
+              <tr>
+                <th>Property</th>
+                <th>Value</th>
+                <th>Type</th>
+                <th v-if="detailHasDesc">Description</th>
+                <th style="width:28px" />
+              </tr>
+            </thead>
+            <tbody>
+              <template v-for="row in flatDetailRows">
+                <tr
+                  :key="row.path"
+                  :class="{ 'row-drilldown': row.drillable }"
+                  @click="row.drillable && togglePath(row.path)"
+                >
+                  <td :style="{ paddingLeft: (4 + row.indent * 20) + 'px' }">
+                    <span v-if="row.drillable" class="dtoggle">{{ openPaths[row.path] ? '▼' : '▶' }}</span>
+                    <span v-else class="dtoggle" />
+                    <span class="prop-name">{{ row.key }}</span>
+                    <span v-if="row.desc && row.desc.sbcProperty === false" class="tag tag-sbc-only ml-1">SBC only</span>
+                    <span v-else-if="row.desc && row.desc.sbcProperty === true" class="tag tag-sbc ml-1">SBC</span>
+                  </td>
+                  <td><span :class="['live-val', liveValClass(row.value)]">{{ fmtLive(row.value) }}</span></td>
+                  <td>
+                    <span class="prop-type">{{ row.typeName }}</span>
+                    <span v-if="row.nullable" class="grey--text" style="font-size:11px"> or null</span>
+                    <div v-if="row.enumMembers" style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px">
+                      <span v-for="m in row.enumMembers" :key="m" class="enum-pip">{{ m }}</span>
+                    </div>
+                  </td>
+                  <td v-if="detailHasDesc" class="desc-cell">
+                    <template v-if="row.desc">{{ row.desc.summary }}</template>
+                    <span v-else class="grey--text">—</span>
+                  </td>
+                  <td style="text-align:center;padding:0 2px">
+                    <v-btn icon x-small :title="'Copy: ' + row.path" @click.stop="copyPath(row.path)"><v-icon x-small>mdi-content-copy</v-icon></v-btn>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
         </template>
 
         <!-- Reference class detail -->
@@ -181,7 +215,7 @@
 import { omModel as BUNDLED_MODEL, omDescriptions as BUNDLED_DESCRIPTIONS, MODEL_REF, DSF_REF_LABEL } from './model-data.js'
 import store from '@/store'
 
-// ── Helpers ────────────────────────────────────────────────────
+// ── Pure helpers (no Vue dependency) ──────────────────────────
 function resolveCollectionType (t) {
   let m = t.match(/ModelCollection<([^>]+)>/)
   if (m) return m[1].replace(/\s*\|\s*null/g, '').trim()
@@ -195,6 +229,7 @@ function isCollectionType (t) { return /ModelCollection</.test(t) || /Array</.te
 function isDictType (t) { return /ModelDictionary</.test(t) || /Map</.test(t) }
 function shortType (t) { return t.replace('ModelCollection', 'Collection').replace('ModelDictionary', 'Dict').replace('ModelSet', 'Set') }
 function pascalToCamel (s) { return s ? s.charAt(0).toLowerCase() + s.slice(1) : s }
+
 function liveTypeName (val) {
   if (val === null) return 'null'
   if (Array.isArray(val)) return 'array[' + val.length + ']'
@@ -202,6 +237,7 @@ function liveTypeName (val) {
   if (typeof val === 'object') return 'object'
   return typeof val
 }
+
 function resolvePath (obj, path) {
   try {
     let cur = obj
@@ -213,24 +249,22 @@ function resolvePath (obj, path) {
     return cur
   } catch (e) { return undefined }
 }
-function buildDetailRows (obj, basePath, typeName, omModel, descriptions) {
-  if (!obj || typeof obj !== 'object') return []
-  const rows = []
-  const entries = obj instanceof Map
-    ? Array.from(obj.entries())
-    : Object.entries(obj).sort((a, b) => (a[0] < b[0] ? -1 : 1))
-  for (const [key, val] of entries) {
-    const path = basePath ? basePath + '.' + key : String(key)
-    const drillable = val !== null && typeof val === 'object'
-    const cls = omModel.classes[typeName]
-    const tsProp = cls ? (cls.props || []).find(p => p.name === key) : null
-    const desc = getDesc(descriptions, typeName, String(key))
-    const enumMembers = tsProp && omModel.enums[tsProp.type]
-      ? omModel.enums[tsProp.type].members.map(m => m.key) : null
-    rows.push({ key: String(key), value: val, path, drillable, typeName: liveTypeName(val), nullable: tsProp ? tsProp.nullable : false, desc, enumMembers })
+
+function guessClassName (omModel, path) {
+  if (!path) return 'ObjectModel'
+  const segs = path.replace(/\[\d+\]/g, '').split('.').filter(Boolean)
+  let cls = omModel.classes['ObjectModel']
+  for (const seg of segs) {
+    if (!cls) return null
+    const prop = (cls.props || []).find(p => p.name === seg)
+    if (!prop) return null
+    const inner = resolveCollectionType(prop.type)
+    const t = (inner || prop.type).replace(/\s*\|\s*null/g, '').trim()
+    cls = omModel.classes[t] || null
   }
-  return rows
+  return cls ? cls.name : null
 }
+
 function getDesc (descriptions, className, propName) {
   if (!className) return null
   const d = descriptions[className]
@@ -238,137 +272,45 @@ function getDesc (descriptions, className, propName) {
   return d[propName] || d[propName.charAt(0).toUpperCase() + propName.slice(1)] || null
 }
 
-// ── Inline expandable property table component ─────────────────
-// Uses a render function to avoid recursive SFC registration issues.
-// Renders a flat <table> with inline-expanded sub-rows at arbitrary depth.
-const OmPropTable = {
-  name: 'OmPropTable',
-  functional: false,
-  props: {
-    rows: Array,
-    openPaths: Object,
-    liveModel: Object,
-    descriptions: Object,
-    omModel: Object,
-    indent: { type: Number, default: 0 }
-  },
-  methods: {
-    toggle (path) { this.$emit('toggle-path', path) },
-    copy (path) { this.$emit('copy', path) },
-    fmtLive (val) {
-      if (val === undefined) return '—'
-      if (val === null) return 'null'
-      if (typeof val === 'boolean') return String(val)
-      if (typeof val === 'number') return String(val)
-      if (typeof val === 'string') return '"' + val + '"'
-      if (Array.isArray(val)) return '[' + val.length + ' items]'
-      if (val instanceof Map) return '{map ' + val.size + '}'
-      return '{object}'
-    },
-    liveClass (val) {
-      if (val === null || val === undefined) return 'live-val--null'
-      if (val === true) return 'live-val--true'
-      if (val === false) return 'live-val--false'
-      return ''
-    },
-    // Guess the TS class name for a path by walking the object model
-    guessClass (path) {
-      if (!path) return 'ObjectModel'
-      const segs = path.replace(/\[\d+\]/g, '').split('.').filter(Boolean)
-      let cls = this.omModel.classes['ObjectModel']
-      for (const seg of segs) {
-        if (!cls) return null
-        const prop = (cls.props || []).find(p => p.name === seg)
-        if (!prop) return null
-        const inner = resolveCollectionType(prop.type)
-        const t = (inner || prop.type).replace(/\s*\|\s*null/g, '').trim()
-        cls = this.omModel.classes[t] || null
-      }
-      return cls ? cls.name : null
-    },
-    subRows (row) {
-      const val = resolvePath(this.liveModel, row.path)
-      if (val === null || typeof val !== 'object') return []
-      const typeName = this.guessClass(row.path)
+// Build a flat list of detail rows for an object, appending expanded children inline.
+// openPaths is consulted to decide which drillable rows to expand.
+function buildFlatRows (liveModel, rootObj, rootPath, omModel, descriptions, openPaths, indent, out) {
+  if (!rootObj || typeof rootObj !== 'object') return
+  const typeName = guessClassName(omModel, rootPath)
+  const entries = rootObj instanceof Map
+    ? Array.from(rootObj.entries())
+    : Object.entries(rootObj).sort((a, b) => (a[0] < b[0] ? -1 : 1))
+
+  for (const [key, val] of entries) {
+    const path = rootPath ? rootPath + '.' + key : String(key)
+    const drillable = val !== null && typeof val === 'object'
+    const cls = omModel.classes[typeName]
+    const tsProp = cls ? (cls.props || []).find(p => p.name === key) : null
+    const desc = getDesc(descriptions, typeName, String(key))
+    const enumMembers = tsProp && omModel.enums[tsProp.type]
+      ? omModel.enums[tsProp.type].members.map(m => m.key) : null
+
+    out.push({ key: String(key), value: val, path, drillable, typeName: liveTypeName(val), nullable: tsProp ? tsProp.nullable : false, desc, enumMembers, indent })
+
+    if (drillable && openPaths[path]) {
       if (Array.isArray(val)) {
-        return val.map((item, i) => {
-          const path = row.path + '[' + i + ']'
-          return { key: String(i), value: item, path, drillable: item !== null && typeof item === 'object', typeName: liveTypeName(item), nullable: false, desc: null, enumMembers: null }
+        val.forEach((item, i) => {
+          const childPath = path + '[' + i + ']'
+          const childDrillable = item !== null && typeof item === 'object'
+          out.push({ key: String(i), value: item, path: childPath, drillable: childDrillable, typeName: liveTypeName(item), nullable: false, desc: null, enumMembers: null, indent: indent + 1 })
+          if (childDrillable && openPaths[childPath]) {
+            buildFlatRows(liveModel, item, childPath, omModel, descriptions, openPaths, indent + 2, out)
+          }
         })
+      } else {
+        buildFlatRows(liveModel, val, path, omModel, descriptions, openPaths, indent + 1, out)
       }
-      return buildDetailRows(val, row.path, typeName, this.omModel, this.descriptions)
-    },
-    hasAnyDesc (rows) { return rows.some(r => r.desc) },
-    forwardToggle (path) { this.$emit('toggle-path', path) },
-    forwardCopy (path) { this.$emit('copy', path) }
-  },
-  template: `
-    <table class="prop-table-inner" :style="{ marginLeft: indent > 0 ? '0px' : '0px' }">
-      <thead v-if="indent === 0">
-        <tr>
-          <th :style="{ paddingLeft: '4px' }">Property</th>
-          <th>Value</th>
-          <th>Type</th>
-          <th v-if="hasAnyDesc(rows)">Description</th>
-          <th style="width:28px" />
-        </tr>
-      </thead>
-      <tbody>
-        <template v-for="row in rows">
-          <tr
-            :key="row.path"
-            :class="{ 'row-drilldown': row.drillable }"
-            @click="row.drillable && toggle(row.path)"
-          >
-            <td :style="{ paddingLeft: (4 + indent * 20) + 'px' }">
-              <span v-if="row.drillable" class="tree-toggle-inline" style="display:inline-block;width:14px;font-size:9px;color:#7f849c;text-align:center;cursor:pointer">{{ openPaths[row.path] ? '▼' : '▶' }}</span>
-              <span v-else style="display:inline-block;width:14px" />
-              <span class="prop-name">{{ row.key }}</span>
-              <span v-if="row.desc && row.desc.sbcProperty === false" class="tag tag-sbc-only ml-1">SBC only</span>
-              <span v-else-if="row.desc && row.desc.sbcProperty === true" class="tag tag-sbc ml-1">SBC</span>
-            </td>
-            <td><span :class="['live-val', liveClass(row.value)]">{{ fmtLive(row.value) }}</span></td>
-            <td>
-              <span class="prop-type">{{ row.typeName }}</span>
-              <span v-if="row.nullable" class="grey--text" style="font-size:11px"> or null</span>
-              <div v-if="row.enumMembers" style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px">
-                <span v-for="m in row.enumMembers" :key="m" class="enum-pip">{{ m }}</span>
-              </div>
-            </td>
-            <td v-if="hasAnyDesc(rows)" class="desc-cell">
-              <template v-if="row.desc">{{ row.desc.summary }}</template>
-              <span v-else class="grey--text">—</span>
-            </td>
-            <td style="text-align:center;padding:0 2px">
-              <v-btn icon x-small :title="'Copy: ' + row.path" @click.stop="copy(row.path)"><v-icon x-small>mdi-content-copy</v-icon></v-btn>
-            </td>
-          </tr>
-          <tr v-if="row.drillable && openPaths[row.path]" :key="row.path + '__expand'">
-            <td :colspan="hasAnyDesc(rows) ? 5 : 4" style="padding:0;border-left:2px solid rgba(137,180,250,0.25)">
-              <om-prop-table
-                :rows="subRows(row)"
-                :open-paths="openPaths"
-                :live-model="liveModel"
-                :descriptions="descriptions"
-                :om-model="omModel"
-                :indent="indent + 1"
-                @toggle-path="forwardToggle"
-                @copy="forwardCopy"
-              />
-            </td>
-          </tr>
-        </template>
-        <tr v-if="!rows.length">
-          <td colspan="5" class="grey--text caption pa-2">No properties.</td>
-        </tr>
-      </tbody>
-    </table>
-  `
+    }
+  }
 }
 
 export default {
   name: 'OmBrowser',
-  components: { OmPropTable },
 
   data () {
     return {
@@ -378,7 +320,7 @@ export default {
       dsfLabel: `DSF: ${DSF_REF_LABEL} (${Object.keys(BUNDLED_DESCRIPTIONS).length} types)`,
 
       openNodes: {},
-      openPaths: {},   // paths expanded inline in the detail panel
+      openPaths: {},
       searchTerm: '',
       treeVersion: 0,
 
@@ -397,11 +339,9 @@ export default {
       try { return store.state.machine.model } catch (e) { return null }
     },
     hasLiveModel () { return !!this.liveModel },
-    liveKeyCount () {
-      if (!this.liveModel) return 0
-      return Object.keys(this.liveModel).length
-    },
+    liveKeyCount () { return this.liveModel ? Object.keys(this.liveModel).length : 0 },
 
+    // ── Tree ─────────────────────────────────────────────────────
     treeRows () {
       // eslint-disable-next-line no-unused-expressions
       this.treeVersion
@@ -414,6 +354,7 @@ export default {
       return rows
     },
 
+    // ── Live detail panel ─────────────────────────────────────────
     detailLabel () {
       if (!this.selectedNode) return ''
       const parts = this.selectedNode.split('.')
@@ -422,19 +363,25 @@ export default {
 
     detailClassDesc () {
       if (this.detailMode !== 'live') return null
-      const typeName = this.guessClassName(this.selectedNode)
-      if (!typeName) return null
-      return (this.descriptions[typeName] || {}).__class__ || null
+      const n = guessClassName(this.omModel, this.selectedNode)
+      return n ? (this.descriptions[n] || {}).__class__ || null : null
     },
 
-    detailRows () {
+    // Flat list of all visible rows including expanded children
+    flatDetailRows () {
       if (this.detailMode !== 'live' || !this.liveModel) return []
-      const obj = this.selectedNode ? resolvePath(this.liveModel, this.selectedNode) : this.liveModel
-      if (!obj || typeof obj !== 'object') return []
-      const typeName = this.guessClassName(this.selectedNode)
-      return buildDetailRows(obj, this.selectedNode, typeName, this.omModel, this.descriptions)
+      const rootObj = this.selectedNode ? resolvePath(this.liveModel, this.selectedNode) : this.liveModel
+      if (!rootObj || typeof rootObj !== 'object') return []
+      const out = []
+      buildFlatRows(this.liveModel, rootObj, this.selectedNode, this.omModel, this.descriptions, this.openPaths, 0, out)
+      return out
     },
 
+    detailHasDesc () {
+      return this.flatDetailRows.some(r => r.desc)
+    },
+
+    // ── Reference detail panel ────────────────────────────────────
     refClass () {
       if (this.detailMode !== 'ref' || !this.selectedNode) return null
       return this.omModel.classes[this.selectedNode] || null
@@ -453,6 +400,7 @@ export default {
       return this.refClass ? (this.refClass.props || []).some(p => this.refPropDesc(p)) : false
     },
 
+    // ── Search ────────────────────────────────────────────────────
     searchMatches () {
       if (!this.searchTerm || !this.searchTerm.trim()) return []
       const lc = this.searchTerm.toLowerCase()
@@ -479,13 +427,13 @@ export default {
     window.addEventListener('mousemove', this.onMouseMove)
     window.addEventListener('mouseup', this.onMouseUp)
   },
-
   beforeDestroy () {
     window.removeEventListener('mousemove', this.onMouseMove)
     window.removeEventListener('mouseup', this.onMouseUp)
   },
 
   methods: {
+    // ── Tree building ─────────────────────────────────────────────
     buildLiveRows (rows, obj, path, depth) {
       if (!obj || typeof obj !== 'object') return
       const entries = obj instanceof Map
@@ -498,10 +446,10 @@ export default {
         if (hasChildren && this.openNodes[id]) {
           if (Array.isArray(val)) {
             val.forEach((item, i) => {
-              const childId = id + '[' + i + ']'
+              const cid = id + '[' + i + ']'
               const ch = item !== null && typeof item === 'object'
-              rows.push({ id: childId, label: String(i), typeName: liveTypeName(item), hasChildren: ch, depth: depth + 1, isLive: true })
-              if (ch && this.openNodes[childId]) this.buildLiveRows(rows, item, childId, depth + 2)
+              rows.push({ id: cid, label: String(i), typeName: liveTypeName(item), hasChildren: ch, depth: depth + 1, isLive: true })
+              if (ch && this.openNodes[cid]) this.buildLiveRows(rows, item, cid, depth + 2)
             })
           } else {
             this.buildLiveRows(rows, val, id, depth + 1)
@@ -528,64 +476,48 @@ export default {
     },
 
     refresh () { this.treeVersion++ },
+
     toggleNode (id) { this.$set(this.openNodes, id, !this.openNodes[id]) },
     togglePath (path) { this.$set(this.openPaths, path, !this.openPaths[path]) },
 
     expandAll () {
       if (this.hasLiveModel) {
-        const newOpen = {}
-        if (this.liveModel) {
-          for (const key of Object.keys(this.liveModel)) newOpen[key] = true
-        }
-        this.openNodes = newOpen
+        const o = {}
+        if (this.liveModel) { for (const k of Object.keys(this.liveModel)) o[k] = true }
+        this.openNodes = o
       } else {
-        const newOpen = {}
-        const walk = (cls, propName, depth) => {
-          if (depth > 4) return
-          newOpen['ref:' + cls.name + ':' + propName] = true
+        const o = {}
+        const walk = (cls, pn, d) => {
+          if (d > 4) return
+          o['ref:' + cls.name + ':' + pn] = true
           for (const p of cls.props || []) {
             const inner = resolveCollectionType(p.type)
             const t = (inner || p.type).replace(/\s*\|\s*null/g, '').trim()
-            const child = this.omModel.classes[t]
-            if (child) walk(child, p.name, depth + 1)
+            const c = this.omModel.classes[t]
+            if (c) walk(c, p.name, d + 1)
           }
         }
         const root = this.omModel.classes['ObjectModel']
         if (root) walk(root, 'objectModel', 0)
-        this.openNodes = newOpen
+        this.openNodes = o
       }
     },
     collapseAll () { this.openNodes = {} },
 
     selectRow (row) {
-      // Clear inline expansions when changing top-level selection
       if (row.isLive) {
         const val = resolvePath(this.liveModel, row.id)
-        if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
-          if (this.selectedNode !== row.id) {
-            this.openPaths = {}
-            this.selectedNode = row.id
-          }
-          this.detailMode = 'live'
-        } else if (Array.isArray(val)) {
-          if (this.selectedNode !== row.id) {
-            this.openPaths = {}
-            this.selectedNode = row.id
-          }
-          this.detailMode = 'live'
-        } else {
-          // leaf — show parent
-          const parts = row.id.replace(/\[\d+\].*/, '').split('.')
+        const isObj = val !== null && typeof val === 'object'
+        const newId = isObj ? row.id : (() => {
+          // leaf — show parent object
+          const parts = row.id.replace(/\[\d+\]$/, '').split('.')
           if (parts.length > 1) parts.pop()
-          const parentId = parts.join('.')
-          if (this.selectedNode !== parentId) {
-            this.openPaths = {}
-            this.selectedNode = parentId
-          }
-          this.detailMode = 'live'
-        }
+          return parts.join('.')
+        })()
+        if (this.selectedNode !== newId) { this.openPaths = {}; this.selectedNode = newId }
+        this.detailMode = 'live'
       } else {
-        this.openPaths = {}
+        if (this.selectedNode !== row.className) { this.openPaths = {} }
         this.selectedNode = row.className
         this.detailMode = 'ref'
       }
@@ -597,36 +529,26 @@ export default {
       this.detailMode = 'ref'
     },
 
-    guessClassName (path) {
-      if (!path) return 'ObjectModel'
-      const segs = path.replace(/\[\d+\]/g, '').split('.').filter(Boolean)
-      let cls = this.omModel.classes['ObjectModel']
-      for (const seg of segs) {
-        if (!cls) return null
-        const prop = (cls.props || []).find(p => p.name === seg)
-        if (!prop) return null
-        const inner = resolveCollectionType(prop.type)
-        const t = (inner || prop.type).replace(/\s*\|\s*null/g, '').trim()
-        cls = this.omModel.classes[t] || null
-      }
-      return cls ? cls.name : null
+    // ── Reference navigation ──────────────────────────────────────
+    refNavigate (type, name) {
+      this.openPaths = {}
+      this.selectedNode = name
+      this.detailMode = type === 'enum' ? 'ref-enum' : 'ref'
     },
 
+    // ── Helpers ───────────────────────────────────────────────────
     getPropDesc (className, propName) {
       const d = this.descriptions[className]
       if (!d) return null
       return d[propName] || d[propName.charAt(0).toUpperCase() + propName.slice(1)] || null
     },
-    refPropDesc (p) {
-      return this.refClass ? this.getPropDesc(this.refClass.name, p.name) : null
-    },
+    refPropDesc (p) { return this.refClass ? this.getPropDesc(this.refClass.name, p.name) : null },
     enumMemberDesc (enumName, memberName) {
       const d = this.descriptions[enumName]
       if (!d) return null
       const e = d[memberName] || d[pascalToCamel(memberName)]
       return e ? e.summary || null : null
     },
-
     refDrillTarget (p) {
       const inner = resolveCollectionType(p.type)
       if (isCollectionType(p.type) && inner && this.omModel.classes[inner]) return inner
@@ -650,16 +572,10 @@ export default {
       if (this.omModel.enums[p.type]) return { name: p.type, kind: 'enum' }
       return null
     },
-    refNavigate (type, name) {
-      this.openPaths = {}
-      this.selectedNode = name
-      this.detailMode = type === 'enum' ? 'ref-enum' : 'ref'
-    },
     refPropPath (p) {
       const paths = this.findPaths(this.refClass.name)
       const base = paths.length > 0 ? paths[0] : pascalToCamel(this.refClass.name)
-      const isColOrDict = isCollectionType(p.type) || isDictType(p.type)
-      return (base ? base + (isColOrDict ? '[0].' : '.') : '') + p.name
+      return (base ? base + (isCollectionType(p.type) || isDictType(p.type) ? '[0].' : '.') : '') + p.name
     },
     findPaths (targetClassName) {
       const root = this.omModel.classes['ObjectModel']
@@ -691,11 +607,9 @@ export default {
         if (cls.name === targetClassName && soFar) { results.add(soFar); return }
         for (const prop of cls.props || []) {
           const inner = resolveCollectionType(prop.type)
-          const isCol = isCollectionType(prop.type)
-          const isDct = isDictType(prop.type)
           const t = (inner || prop.type).replace(/\s*\|\s*null/g, '').trim()
           if (!this.omModel.classes[t]) continue
-          const suffix = isCol ? '[]' : isDct ? '{}' : ''
+          const suffix = isCollectionType(prop.type) ? '[]' : isDictType(prop.type) ? '{}' : ''
           const seg = soFar ? soFar + '.' + prop.name + suffix : prop.name + suffix
           const toWalk = new Set([t])
           for (const sub of (subMap[t] || [])) toWalk.add(sub)
@@ -704,6 +618,23 @@ export default {
       }
       walk(root, '')
       return [...results].sort()
+    },
+
+    fmtLive (val) {
+      if (val === undefined) return '—'
+      if (val === null) return 'null'
+      if (typeof val === 'boolean') return String(val)
+      if (typeof val === 'number') return String(val)
+      if (typeof val === 'string') return '"' + val + '"'
+      if (Array.isArray(val)) return '[' + val.length + ' items]'
+      if (val instanceof Map) return '{map ' + val.size + '}'
+      return '{object}'
+    },
+    liveValClass (val) {
+      if (val === null || val === undefined) return 'live-val--null'
+      if (val === true) return 'live-val--true'
+      if (val === false) return 'live-val--false'
+      return ''
     },
 
     copyPath (path) {
@@ -761,20 +692,23 @@ export default {
   padding: 8px 12px; border-radius: 0 4px 4px 0;
 }
 
-/* Inline expandable table */
-.prop-table-inner { width: 100%; border-collapse: collapse; font-size: 13px; }
-.prop-table-inner th {
+/* Flat detail table */
+.detail-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.detail-table th {
   text-align: left; font-size: 11px; font-weight: 600; color: #7f849c;
   padding: 4px 8px; border-bottom: 1px solid #313244; white-space: nowrap;
 }
-.prop-table-inner td { padding: 5px 8px; border-bottom: 1px solid rgba(49,50,68,0.5); vertical-align: top; }
-.prop-table-inner tr:last-child td { border-bottom: none; }
-.prop-table-inner tr:hover td { background: rgba(255,255,255,0.03); }
+.detail-table td { padding: 5px 8px; border-bottom: 1px solid rgba(49,50,68,0.4); vertical-align: top; }
+.detail-table tr:last-child td { border-bottom: none; }
+.detail-table tbody tr:hover td { background: rgba(255,255,255,0.03); }
+.detail-table .row-drilldown { cursor: pointer; }
+.detail-table .row-drilldown:hover td { background: rgba(137,180,250,0.06) !important; }
 
-.row-drilldown { cursor: pointer; }
-.row-drilldown:hover td { background: rgba(137,180,250,0.05) !important; }
+/* Indent guide — left border on expanded children */
+.detail-table td[style*="padding-left: 2"] { border-left: 2px solid rgba(137,180,250,0.2); }
 
-/* Shared with both table variants */
+.dtoggle { display: inline-block; width: 14px; font-size: 9px; color: #7f849c; text-align: center; flex-shrink: 0; }
+
 .prop-table { width: 100%; }
 .prop-name { font-family: monospace; font-weight: 500; }
 .prop-name--readonly { color: #cba6f7; }
